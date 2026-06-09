@@ -1,12 +1,31 @@
 # Snake Reinforcement Learning
 
-参考 [helicopter-rl](https://github.com/rossning92/helicopter-rl)，使用 **Gymnasium + Stable-Baselines3 (PPO)** 训练贪吃蛇智能体。
+[![Stars](https://img.shields.io/github/stars/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/stargazers)
+[![Forks](https://img.shields.io/github/forks/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/network/members)
+[![Issues](https://img.shields.io/github/issues/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/issues)
+[![License](https://img.shields.io/github/license/louislog/AI_Sanke?style=flat-square)](#许可证)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Gymnasium](https://img.shields.io/badge/Gymnasium-1.0%2B-0f9d58?style=flat-square)](https://gymnasium.farama.org/)
+[![Stable-Baselines3](https://img.shields.io/badge/Stable--Baselines3-PPO-ff6f00?style=flat-square)](https://stable-baselines3.readthedocs.io/)
 
-## 特性
+用强化学习训练 AI 玩经典贪吃蛇。项目将 Pygame 实现的贪吃蛇游戏封装为 [Gymnasium](https://gymnasium.farama.org/) 标准环境，使用 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) 的 PPO 算法进行策略优化，并提供训练、评估、可视化与手动游玩等完整工作流，适合作为 RL 入门与实践的参考项目。
 
-- Gymnasium 兼容的 `SnakeEnv` 环境
-- PPO 训练流水线（并行环境、检查点、TensorBoard）
-- Pygame 渲染，支持实时评估与视频导出
+## 功能特性
+
+| 模块 | 说明 |
+|------|------|
+| **游戏核心** | `snake_game.py` 实现网格贪吃蛇逻辑与 Pygame 渲染，支持人机对战 |
+| **RL 环境** | `SnakeEnv` 符合 Gymnasium API，10 维观测、3 离散动作、距离塑形奖励 |
+| **PPO 训练** | 并行采样、定期 checkpoint、`EvalCallback` 自动保存最优模型 |
+| **监控与日志** | TensorBoard 曲线、终端 `verbose` 统计、训练日志解读见下文 |
+| **评估与导出** | `eval.py` 确定性推理，支持实时渲染与 MP4 视频导出 |
+| **手动游玩** | 方向键 / WASD 控制，本地最高分记录 |
+
+## 技术栈
+
+- **算法**：PPO（Proximal Policy Optimization）
+- **框架**：Gymnasium、Stable-Baselines3、PyTorch（SB3 依赖）
+- **可视化**：Pygame、TensorBoard、imageio（视频导出）
 
 ## 快速开始
 
@@ -170,6 +189,10 @@ TensorBoard 中同名指标可在 `bash tensorboard.sh` 启动后查看曲线变
 - [helicopter-rl](https://github.com/rossning92/helicopter-rl)
 - [Stable-Baselines3](https://stable-baselines3.readthedocs.io/)
 - [Gymnasium](https://gymnasium.farama.org/)
+
+## Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=louislog/AI_Sanke&type=Date)](https://star-history.com/#louislog/AI_Sanke&Date)
 
 ## 许可证
 
