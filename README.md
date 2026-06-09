@@ -196,4 +196,4 @@ TensorBoard 中同名指标可在 `bash tensorboard.sh` 启动后查看曲线变
 
 ## 许可证
 
-MIT
+[MIT](LICENSE)
