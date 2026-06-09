@@ -1,0 +1,10 @@
+__pycache__/
+.venv/
+tmp/
+*.pyc
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+
