@@ -199,6 +199,8 @@ class SnakeGame:
         self.steps = 0
         self.game_over = False
         self.won = False
+        self.death_reason: str | None = None
+        self._ate_food = False
 
     def _generate_food(self) -> Position:
         occupied = {(segment.x, segment.y) for segment in self.snake}
@@ -258,6 +260,20 @@ class SnakeGame:
 
     def is_board_full(self) -> bool:
         return len(self.snake) >= self.board_capacity()
+
+    def coverage_ratio(self) -> float:
+        return len(self.snake) / self.board_capacity()
+
+    def action_for_direction(self, target: Direction) -> int | None:
+        """将绝对方向转换为相对动作（0 直行 / 1 右转 / 2 左转），掉头返回 None。"""
+        diff = (int(target) - int(self.direction)) % 4
+        if diff == 0:
+            return 0
+        if diff == 1:
+            return 1
+        if diff == 3:
+            return 2
+        return None
 
     def win_reward(self) -> float:
         return self.REWARD_WIN_BASE + self.board_capacity()
@@ -420,6 +436,16 @@ class SnakeGame:
 
         if self._is_collision(new_head, will_grow=will_grow):
             self.game_over = True
+            self._ate_food = False
+            if (
+                new_head.x < 0
+                or new_head.x >= self.width
+                or new_head.y < 0
+                or new_head.y >= self.height
+            ):
+                self.death_reason = "wall"
+            else:
+                self.death_reason = "self"
             if self.score > self.high_score:
                 self.high_score = self.score
                 self._save_high_score()

@@ -1,4 +1,4 @@
-# Snake Reinforcement Learning
+# Snake AI：满图覆盖研究项目
 
 [![Stars](https://img.shields.io/github/stars/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/stargazers)
 [![Forks](https://img.shields.io/github/forks/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/network/members)
@@ -8,66 +8,206 @@
 [![Gymnasium](https://img.shields.io/badge/Gymnasium-1.0%2B-0f9d58?style=flat-square)](https://gymnasium.farama.org/)
 [![Stable-Baselines3](https://img.shields.io/badge/Stable--Baselines3-PPO-ff6f00?style=flat-square)](https://stable-baselines3.readthedocs.io/)
 
-用强化学习训练 AI 玩经典贪吃蛇。项目将 Pygame 实现的贪吃蛇游戏封装为 [Gymnasium](https://gymnasium.farama.org/) 标准环境，使用 [Stable-Baselines3](https://stable-baselines3.readthedocs.io/) 的 PPO 算法进行策略优化，并提供训练、评估、可视化与手动游玩等完整工作流，适合作为 RL 入门与实践的参考项目。
+一个以「蛇身覆盖整个地图（满图通关）」为目标的贪吃蛇 AI 研究项目。
+不局限于单一 RL 算法，而是提供 **规则 / 搜索 / 混合 / 强化学习 / 模仿学习** 多条算法路线，
+配套统一的训练、评估、可视化与失败分析工具链。
 
-## 功能特性
+## 当前基线成绩（每尺寸 20 局）
 
-| 模块 | 说明 |
-|------|------|
-| **游戏核心** | `snake_game.py` 实现网格贪吃蛇逻辑与 Pygame 渲染，支持人机对战 |
-| **RL 环境** | `SnakeEnv` 符合 Gymnasium API，10 维观测、3 离散动作、距离塑形奖励 |
-| **PPO 训练** | 并行采样、定期 checkpoint、`EvalCallback` 自动保存最优模型 |
-| **监控与日志** | TensorBoard 曲线、终端 `verbose` 统计、训练日志解读见下文 |
-| **评估与导出** | `eval.py` 确定性推理，支持实时渲染与 MP4 视频导出 |
-| **手动游玩** | 方向键 / WASD 控制，本地最高分记录 |
+| 策略 | 6x6 | 8x8 | 10x10 | 12x12 | 平均覆盖率 |
+|------|-----|-----|-------|-------|-----------|
+| random | 0% | 0% | 0% | 0% | ~10% |
+| search (A* 安全寻路) | 15% | 0% | 0% | 0% | ~74% |
+| **hamiltonian** | **100%** | **100%** | **100%** | **100%** | 100% |
+| **hybrid** | **100%** | **100%** | **100%** | **100%** | 100% |
 
-## 技术栈
+（表中百分比为满图成功率；hybrid 比 hamiltonian 平均少走约 5~10% 步数）
 
-- **算法**：PPO（Proximal Policy Optimization）
-- **框架**：Gymnasium、Stable-Baselines3、PyTorch（SB3 依赖）
-- **可视化**：Pygame、TensorBoard、imageio（视频导出）
+## 架构分层
+
+```
+.
+├── snake_game.py        # 游戏核心逻辑 + Pygame 渲染（含死因记录）
+├── snake_env.py         # Gymnasium 环境：可配置奖励 + 3 种观测模式
+├── policies/            # 策略层（统一 BasePolicy 接口）
+│   ├── grid_utils.py    #   BFS / A* / flood fill / 路径安全模拟
+│   ├── base.py          #   BasePolicy 抽象 + RandomPolicy
+│   ├── hamiltonian.py   #   Hamiltonian 回路构造 + shortcut 策略
+│   ├── search.py        #   A* 安全寻路 + 追尾 + flood fill 兜底
+│   ├── hybrid.py        #   前期搜索吃食物 + 中后期回路保满图
+│   └── rl.py            #   SB3 模型适配器
+├── algos.py             # RL 算法工厂：PPO / MaskablePPO / DQN / QR-DQN
+├── train.py             # RL 训练：课程学习、并行环境、TensorBoard
+├── collect_expert.py    # 模仿学习：专家数据采集
+├── bc_train.py          # 模仿学习：行为克隆（产出可微调的 SB3 模型）
+├── eval.py              # 统一评估：覆盖率 / 死因 / 对比表 / GIF / 死亡回放
+└── tests/               # pytest 测试（环境、回路、各策略满图）
+```
 
 ## 快速开始
-
-### 安装
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# 运行测试
+python -m pytest tests/ -q
+
+# 直接看满图基线（无需训练）
+python eval.py --policy hybrid --grid-size 10 --n-episodes 10
+python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
 ```
 
-### 测试环境
+## 算法路线
+
+### 1. 规则与搜索基线（无需训练，开箱即用）
 
 ```bash
-python test_env.py
-python test_env.py --render
+# Hamiltonian 回路：满图覆盖的强基线，偶数边长地图 100% 满图
+python eval.py --policy hamiltonian --grid-size 8 --n-episodes 20
+
+# A* 安全寻路：吃完食物后检查蛇头能否到达蛇尾，防止短视自困
+python eval.py --policy search --grid-size 8 --n-episodes 20
+
+# 混合策略（推荐）：前期安全寻路吃食物，覆盖率超过 25% 后切回路
+python eval.py --policy hybrid --grid-size 8 --n-episodes 20
+
+# 多策略 x 多尺寸对比表
+python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10,12 --n-episodes 20
 ```
 
-### 训练
+关键机制：
+
+- **Hamiltonian 回路**：预构造经过每格恰好一次的闭合回路，沿回路走永不自撞。
+  蛇较短时允许「安全 shortcut」——只要目标格在回路序上不越过蛇尾（留安全余量），
+  可以沿回路向前跳，兼顾速度与安全；蛇长超过容量 50% 后禁用 shortcut，纯回路收尾。
+- **A* safe path**：找到食物最短路后，先模拟整条路径（含增长），确认吃完后蛇头仍能
+  BFS 到达蛇尾才执行；否则追尾或选 flood fill 可达空间最大的方向。
+- **flood fill 空间评估**：每个候选动作模拟一步后计算可达空格数，低于蛇身长度视为死路。
+- **数学限制**：奇x奇地图（如 7x7、15x15）不存在 Hamiltonian 回路（二分图奇顶点数），
+  此时 hybrid 自动退化为纯搜索策略，无法保证满图。
+
+### 2. 强化学习
 
 ```bash
-python train.py --curriculum --n-envs 32 --total-timesteps 5000000 --save-freq 100000
+# MaskablePPO（默认）+ 8 通道栅格观测 + coverage 奖励 + 课程学习
+python train.py --algo maskable_ppo --grid-size 10 --curriculum \
+    --curriculum-sizes 6,8,10 --total-timesteps 5000000 --n-envs 16
+
+# 其他算法
+python train.py --algo ppo ...
+python train.py --algo dqn --buffer-size 200000 ...
+python train.py --algo qrdqn ...
+
+# 覆盖率达标即提前进入下一课程阶段
+python train.py --curriculum --coverage-threshold 0.9 ...
+
+# 评估
+python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
 ```
 
-检查点与 TensorBoard 日志保存在 `tmp/`。评估最优模型保存在 `tmp/best/best_model.zip`。
+观测模式（`--obs-mode`）：
 
-### TensorBoard
+| 模式 | 内容 |
+|------|------|
+| `grid_full`（默认） | 8 通道：蛇头、蛇身、食物、蛇身顺序场、棋盘掩码、到食物 BFS 距离场、到蛇尾 BFS 距离场、Hamiltonian index 场 |
+| `grid` | 3 通道：蛇头、蛇身、食物（旧版兼容） |
+| `vector` | 24 维手工特征（旧版兼容） |
+
+奖励预设（`--reward-preset`，定义见 `snake_env.py` 的 `REWARD_PRESETS`，方便消融）：
+
+| 预设 | 设计意图 |
+|------|---------|
+| `coverage`（训练默认） | 面向满图：死亡惩罚随覆盖率增大、吃食物按覆盖率加成、惩罚自困与可达空间骤降、弱化靠近食物塑形 |
+| `default` | 旧版行为 |
+| `sparse` | 几乎无塑形，检验算法信用分配能力 |
+| `greedy` | 短视对照组：高靠近食物奖励，预期后期表现差 |
+
+### 3. 模仿学习（BC + RL fine-tuning）
 
 ```bash
-bash tensorboard.sh
+# 1) 用 hybrid 专家采集演示数据
+python collect_expert.py --policy hybrid --grid-size 8 --n-episodes 500 \
+    --obs-mode grid_full --out data/expert_hybrid_8.npz
+
+# 2) 行为克隆预训练
+python bc_train.py --data data/expert_hybrid_8.npz --grid-size 8 --epochs 30 --out tmp/bc_model
+
+# 3) 评估 BC 模型
+python eval.py --policy rl --model tmp/bc_model.zip --grid-size 8
+
+# 4) RL fine-tuning（继承 BC 权重）
+python train.py --init-model tmp/bc_model.zip --grid-size 8 --reward-preset coverage \
+    --total-timesteps 2000000
 ```
 
-### 评估
+**BC + RL 相比纯 RL 的优势**：专家（hybrid）演示直接包含「绕路保命」「沿回路收尾」这类
+长期规划行为。纯 RL 要从随机探索中靠稀疏的远期回报发现这些策略，样本效率极低且容易
+收敛到「吃到 60~80% 就死」的局部最优；BC 让网络先把专家策略「抄会」，fine-tuning 从
+一个已经会玩的策略出发，只需在专家基础上做局部改进。
+
+## 评估体系
+
+`eval.py` 输出：average_score、max_score、average_length、max_length、average_steps、
+coverage_ratio、max_coverage、full_map_success_rate、death_reasons（wall / self / timeout）。
 
 ```bash
-python eval.py --model tmp/best/best_model.zip
-python eval.py --model tmp/best/best_model.zip --out-video gameplay.mp4
+# 死亡回放：保存每次死亡前 90 帧（mp4，无 ffmpeg 时自动转 gif）
+python eval.py --policy rl --model tmp/best/best_model.zip --replay-dir replays/
+
+# GIF / MP4 演示导出
+python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
+
+# 实时窗口观看
+python eval.py --policy hybrid --grid-size 10 --render
 ```
 
-未指定 `--model` 时，自动使用 `tmp/` 下最新的检查点。
+## 各算法优劣对比
 
-### 手动游玩
+| 路线 | 满图能力 | 训练成本 | 速度（步数/食物） | 泛化性 | 适用场景 |
+|------|---------|---------|----------------|--------|---------|
+| Hamiltonian | 保证满图（偶数边长） | 0 | 慢（绕全图） | 任意偶数尺寸即时可用 | 满图上限基线 |
+| A* safe path | 中等覆盖（~75%） | 0 | 快 | 任意尺寸 | 速度基线、奇x奇兜底 |
+| Hybrid | 保证满图 + 较快 | 0 | 中 | 任意尺寸（奇x奇退化） | **推荐默认策略 / 专家数据源** |
+| MaskablePPO | 小图可接近满图，需大量训练 | 高 | 学到什么算什么 | 需 padding 观测跨尺寸 | 研究 RL 长期规划上限 |
+| DQN / QR-DQN | 通常低于 PPO | 高 | - | 同上 | 离线 / 价值法对照 |
+| BC + RL | 接近专家，可再优化 | 中 | 接近专家 | 同上 | 让 RL 跳过冷启动 |
+
+**为什么 Hamiltonian / safe path / 模仿学习比单纯 PPO 更适合满图覆盖**：
+满图覆盖本质是长视野路径规划问题——最后 20% 的失误率必须趋近于 0，而错误的代价
+（死亡）要到几百步之后才暴露。PPO 这类短期奖励驱动的方法面临三重困难：
+信用分配跨度太长（吃最后一个食物可能需要上千步铺垫）、探索难（随机策略几乎不可能
+偶然走出回路结构）、风险不对称（92% 与 100% 覆盖的回报差距小但策略难度差距巨大）。
+而 Hamiltonian 回路把「不死」变成图论保证，safe path 把「不自困」变成可计算的检查，
+模仿学习则把这些结构性知识直接注入网络作为 RL 的起点——三者都绕过了纯 RL 最弱的环节。
+
+## 已知失败场景
+
+1. **奇x奇地图**（7x7、15x15）：不存在 Hamiltonian 回路，hybrid 退化为搜索策略，
+   覆盖率约 50~75%，无法保证满图（图论限制，非实现缺陷）。
+2. **search 策略后期超时**：蛇很长时安全路径长期不存在，策略持续追尾绕圈不吃食物，
+   触发步数上限（表中 `timeout`）。
+3. **hybrid 切换窗口**：`switch_ratio` 调高（>0.3）时，长蛇从自由走位贴回回路的过渡期
+   偶发自困；默认 0.25 在 6x6~12x12 实测 100 % 满图，但更大地图建议先跑对比验证。
+4. **RL 模型跨尺寸迁移**：训练时 `grid_pad_size` 固定，评估尺寸超过 padding 会失败；
+   小图模型直接上大图性能显著下降。
+5. **大地图（20x20+）的 RL**：即使 coverage 奖励 + 课程学习，PPO 在大图后期仍难以稳定
+   收尾，建议 BC（hybrid 专家）+ fine-tuning 路线。
+
+## 后续优化方向
+
+- **动态 Hamiltonian 回路扰动**：周期性局部重构回路（如 banded cycle repair），
+  在保持安全不变量的同时进一步缩短吃食物路径。
+- **奇x奇地图近似方案**：构造缺一格的近似回路 + 末段搜索收尾。
+- **AlphaZero-style MCTS**：以学习的价值网络评估 flood fill 风险，搜索期内做多步规划；
+  策略接口已统一，可作为新的 `BasePolicy` 接入。
+- **DAgger**：用 hybrid 作为在线专家纠正 BC 学生的分布偏移，替代单轮 BC。
+- **Recurrent PPO**：处理部分可观测（观测已含全图，收益可能有限）。
+- **课程自动化**：基于 eval 覆盖率自动伸缩课程（已支持 `--coverage-threshold`，
+  可扩展为自动回退）。
+
+## 手动游玩
 
 ```bash
 python snake_game.py
@@ -75,104 +215,14 @@ python snake_game.py
 
 方向键 / WASD 控制，撞死后按 `R` 重开，`ESC` 退出。
 
-## 项目结构
+## TensorBoard 与训练日志
 
-```
-.
-├── snake_game.py    # 游戏逻辑 + Pygame 渲染
-├── snake_env.py     # Gymnasium 环境封装
-├── train.py         # PPO 训练
-├── eval.py          # 模型评估与视频导出
-├── test_env.py      # 环境测试
-├── runtime.py       # 运行时警告过滤
-├── requirements.txt
-└── tensorboard.sh
+```bash
+bash tensorboard.sh
 ```
 
-## RL 设计
-
-### 观测（10 维特征）
-
-前方/左侧/右侧危险、食物相对方向、当前方向 one-hot。
-
-### 动作
-
-- `0` 直行 | `1` 右转 | `2` 左转
-
-### 奖励
-
-吃到食物 +10，死亡 -20，每步 -0.001，靠近食物额外 +(距离缩短)×0.1。
-
-## PPO 训练日志解读
-
-`train.py` 设置 `verbose=1` 时，Stable-Baselines3 会周期性在终端打印训练统计。日志分为三组：**环境采样表现**、**训练进度**、**PPO 梯度更新**。
-
-示例：
-
-```
------------------------------------------
-| rollout/                |             |
-|    ep_len_mean          | 497         |
-|    ep_rew_mean          | 322         |
-| time/                   |             |
-|    fps                  | 18626       |
-|    iterations           | 57          |
-|    time_elapsed         | 200         |
-|    total_timesteps      | 3735552     |
-| train/                  |             |
-|    approx_kl            | 0.001040139 |
-|    clip_fraction        | 0.0118      |
-|    clip_range           | 0.2         |
-|    entropy_loss         | -0.154      |
-|    explained_variance   | 0.263       |
-|    learning_rate        | 0.0003      |
-|    loss                 | 56.6        |
-|    n_updates            | 560         |
-|    policy_gradient_loss | 1.04e-05    |
-|    value_loss           | 88.8        |
------------------------------------------
-```
-
-### rollout/ — 环境采样表现
-
-智能体在并行环境里实际玩游戏的表现（采样阶段，不是梯度更新那一步）。
-
-| 指标 | 含义 |
-|------|------|
-| `ep_len_mean` | 最近一批 episode 的**平均步数**。一局从 `reset` 到死亡或达到 `max_steps` 截断。 |
-| `ep_rew_mean` | 最近一批 episode 的**平均累计奖励**（含吃食物、死亡惩罚、每步惩罚、距离塑形）。 |
-
-这两个指标最直观：**在奖励设计不变的前提下，越高通常越好**。本项目里 `ep_rew_mean` 大致可换算为「每局吃了多少食物」——例如 300 左右通常对应每局约 30 个食物（还需结合 `ep_len_mean` 看）。
-
-> 注意：`rollout/` 统计来自训练时的**随机策略**采样；评估时请用 `eval.py`（`deterministic=True`）或 `tmp/best/best_model.zip`，两者可能不一致。
-
-### time/ — 训练进度与速度
-
-| 指标 | 含义 |
-|------|------|
-| `fps` | 每秒处理的**环境步数**（steps/s）。使用 `--n-envs 16` 等并行环境时数值会很大，反映采样吞吐，不是神经网络训练的 FPS。 |
-| `iterations` | 已完成的 **PPO 迭代轮数**。每轮先采样 `n_steps × n_envs` 步，再对这批数据做多轮梯度更新。 |
-| `time_elapsed` | 累计训练时间（秒）。 |
-| `total_timesteps` | 累计**环境交互步数**（所有并行环境步数之和）。 |
-
-### train/ — PPO 梯度更新
-
-每轮采样结束后，用这批 rollout 数据更新策略网络（actor）和价值网络（critic）时的内部指标。
-
-| 指标 | 含义 | 参考范围 / 说明 |
-|------|------|-----------------|
-| `learning_rate` | 当前学习率。 | 与 `train.py` 中设置一致（默认 `2.5e-4`）。 |
-| `n_updates` | 累计**梯度更新次数**。 | 随训练单调增加。 |
-| `clip_range` | PPO 裁剪超参数 ε。 | 固定超参（默认 `0.2`），限制策略单次更新幅度。 |
-| `approx_kl` | 新旧策略的**近似 KL 散度**，衡量策略变化幅度。 | 太小（如 `< 0.01`）说明更新保守；过大（如 `> 0.03`）可能不稳定。 |
-| `clip_fraction` | 触发 PPO ratio 裁剪的样本比例。 | 太低说明几乎没用到裁剪；过高说明更新经常撞到边界。 |
-| `entropy_loss` | 策略熵相关项（SB3 以负号记录）。 | 绝对值越大，动作分布越随机、探索越多；趋近 0 表示策略更确定。 |
-| `policy_gradient_loss` | **策略（actor）损失**。 | 单独看绝对值意义不大，关注趋势即可。 |
-| `value_loss` | **价值（critic）损失**，预测回报与真实回报的误差。 | 偏大说明价值网络仍在学习；需结合 `explained_variance` 判断。 |
-| `explained_variance` | 价值网络对回报的解释方差，范围约 0～1。 | 越接近 1 越好；长期偏低（如 `< 0.3`）说明 critic 拟合不足。 |
-| `loss` | 总损失（策略 + 价值 + 熵等加权综合）。 | 主要看趋势，不宜单独解读绝对值。 |
-
-### 快速对照
+`train.py` 的 `verbose=1` 终端日志分三组：**rollout/**（采样表现）、**time/**（进度）、
+**train/**（梯度更新）。
 
 | 想看什么 | 主要看 |
 |----------|--------|
@@ -182,13 +232,14 @@ python snake_game.py
 | 探索 vs 利用 | `train/entropy_loss` |
 | 价值网络是否学好 | `train/explained_variance`、`train/value_loss` |
 
-TensorBoard 中同名指标可在 `bash tensorboard.sh` 启动后查看曲线变化；选模型时建议以 `EvalCallback` 写入的 `tmp/best/best_model.zip` 为准，而非仅看最后一轮 `rollout` 数值。
+选模型以 `EvalCallback` 写入的 `tmp/best/best_model.zip` 为准，而非最后一轮 rollout 数值。
 
 ## 参考
 
 - [helicopter-rl](https://github.com/rossning92/helicopter-rl)
 - [Stable-Baselines3](https://stable-baselines3.readthedocs.io/)
 - [Gymnasium](https://gymnasium.farama.org/)
+- [AlphaPhoenix: How to Win Snake](https://www.youtube.com/watch?v=TOpBcfbAgPg)（Hamiltonian 扰动思路）
 
 ## Star 趋势
 
