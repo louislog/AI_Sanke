@@ -2,6 +2,7 @@ import math
 import random
 import sys
 import warnings
+from collections import deque
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
@@ -98,8 +99,27 @@ class SnakeGame:
     HIGH_SCORE_FILE = Path(__file__).with_name(".snake_highscore")
 
     REWARD_FOOD = 10.0
-    REWARD_DEATH = -20.0
-    REWARD_STEP = -0.001
+    REWARD_DEATH = -50.0
+    REWARD_STEP = 0.0
+    REWARD_WIN_BASE = 100.0
+
+    CARDINAL_DELTAS = ((0, -1), (1, 0), (0, 1), (-1, 0))
+
+    # 8 方向射线：N, NE, E, SE, S, SW, W, NW
+    RAY_DIRECTIONS = (
+        (0, -1),
+        (1, -1),
+        (1, 0),
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (-1, -1),
+    )
+    BASE_FEATURE_DIM = 10
+    RAY_FEATURE_DIM = len(RAY_DIRECTIONS)
+    SPATIAL_FEATURE_DIM = 6
+    FEATURE_DIM = BASE_FEATURE_DIM + RAY_FEATURE_DIM + SPATIAL_FEATURE_DIM
 
     COLOR_BG = (18, 22, 30)
     COLOR_BG_ALT = (22, 27, 36)
@@ -178,6 +198,7 @@ class SnakeGame:
         self.score = 0
         self.steps = 0
         self.game_over = False
+        self.won = False
 
     def _generate_food(self) -> Position:
         occupied = {(segment.x, segment.y) for segment in self.snake}
@@ -223,6 +244,171 @@ class SnakeGame:
         head = self.snake[0]
         return abs(self.food.x - head.x) + abs(self.food.y - head.y)
 
+    def food_bfs_distance(self) -> int | None:
+        passable = self._passable_cells()
+        head = self.snake[0]
+        return self._bfs_distance(
+            (head.x, head.y),
+            (self.food.x, self.food.y),
+            passable,
+        )
+
+    def board_capacity(self) -> int:
+        return self.width * self.height
+
+    def is_board_full(self) -> bool:
+        return len(self.snake) >= self.board_capacity()
+
+    def win_reward(self) -> float:
+        return self.REWARD_WIN_BASE + self.board_capacity()
+
+    def valid_action_mask(self) -> list[bool]:
+        head = self.snake[0]
+        masks: list[bool] = []
+        for action in range(3):
+            direction = self._get_new_direction(self.direction, action)
+            new_head = self._next_position(head, direction)
+            will_grow = self._will_grow_at(new_head)
+            masks.append(not self._is_collision(new_head, will_grow=will_grow))
+        return masks
+
+    def _max_ray_distance_to_wall(self, head: Position, dx: int, dy: int) -> int:
+        limits: list[int] = []
+        if dx < 0:
+            limits.append(head.x)
+        elif dx > 0:
+            limits.append(self.width - 1 - head.x)
+        if dy < 0:
+            limits.append(head.y)
+        elif dy > 0:
+            limits.append(self.height - 1 - head.y)
+        return min(limits) if limits else 0
+
+    def _ray_clear_distance(self, head: Position, dx: int, dy: int) -> int:
+        occupied = {(segment.x, segment.y) for segment in self.snake[1:]}
+        x, y = head.x, head.y
+        steps = 0
+        while True:
+            x += dx
+            y += dy
+            if x < 0 or x >= self.width or y < 0 or y >= self.height:
+                break
+            if (x, y) in occupied:
+                break
+            steps += 1
+        return steps
+
+    def _ray_features(self, head: Position) -> list[float]:
+        features: list[float] = []
+        for dx, dy in self.RAY_DIRECTIONS:
+            max_dist = self._max_ray_distance_to_wall(head, dx, dy)
+            clear_dist = self._ray_clear_distance(head, dx, dy)
+            if max_dist <= 0:
+                features.append(0.0)
+            else:
+                features.append(clear_dist / max_dist)
+        return features
+
+    def _passable_cells(self) -> set[tuple[int, int]]:
+        # 蛇身中间段为障碍；头所在格可站立，尾巴下步会移走视为可通过
+        occupied = {(segment.x, segment.y) for segment in self.snake[1:-1]}
+        return {
+            (x, y)
+            for x in range(self.width)
+            for y in range(self.height)
+            if (x, y) not in occupied
+        }
+
+    def _bfs_distance(
+        self,
+        start: tuple[int, int],
+        goal: tuple[int, int],
+        passable: set[tuple[int, int]],
+    ) -> int | None:
+        if start == goal:
+            return 0
+        if goal not in passable:
+            return None
+
+        queue: deque[tuple[tuple[int, int], int]] = deque([(start, 0)])
+        visited = {start}
+        while queue:
+            (x, y), dist = queue.popleft()
+            for dx, dy in self.CARDINAL_DELTAS:
+                nxt = (x + dx, y + dy)
+                if nxt not in passable or nxt in visited:
+                    continue
+                if nxt == goal:
+                    return dist + 1
+                visited.add(nxt)
+                queue.append((nxt, dist + 1))
+        return None
+
+    def reachable_ratio(self) -> float:
+        passable = self._passable_cells()
+        if not passable:
+            return 0.0
+
+        head = self.snake[0]
+        start = (head.x, head.y)
+        if start not in passable:
+            return 0.0
+
+        queue: deque[tuple[int, int]] = deque([start])
+        visited = {start}
+        while queue:
+            x, y = queue.popleft()
+            for dx, dy in self.CARDINAL_DELTAS:
+                nxt = (x + dx, y + dy)
+                if nxt in passable and nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        return len(visited) / len(passable)
+
+    def _relative_direction_flags(
+        self, dx: int, dy: int, direction: Direction
+    ) -> tuple[float, float, float]:
+        if direction == Direction.UP:
+            return float(dy < 0), float(dx < 0), float(dx > 0)
+        if direction == Direction.RIGHT:
+            return float(dx > 0), float(dy < 0), float(dy > 0)
+        if direction == Direction.DOWN:
+            return float(dy > 0), float(dx > 0), float(dx < 0)
+        return float(dx < 0), float(dy > 0), float(dy < 0)
+
+    def _spatial_features(self, head: Position, direction: Direction) -> list[float]:
+        passable = self._passable_cells()
+        reachable_ratio = self.reachable_ratio()
+
+        head_pos = (head.x, head.y)
+        food_pos = (self.food.x, self.food.y)
+        bfs_dist = self._bfs_distance(head_pos, food_pos, passable)
+        max_dist = self.width * self.height
+        bfs_food_norm = 1.0 if bfs_dist is None else bfs_dist / max_dist
+
+        tail = self.snake[-1]
+        tail_ahead, tail_left, tail_right = self._relative_direction_flags(
+            tail.x - head.x, tail.y - head.y, direction
+        )
+
+        free_neighbors = sum(
+            1
+            for dx, dy in self.CARDINAL_DELTAS
+            if not self._is_collision(
+                Position(head.x + dx, head.y + dy),
+                will_grow=self._will_grow_at(Position(head.x + dx, head.y + dy)),
+            )
+        )
+
+        return [
+            reachable_ratio,
+            bfs_food_norm,
+            tail_ahead,
+            tail_left,
+            tail_right,
+            free_neighbors / 4.0,
+        ]
+
     def step(self, action: int) -> tuple[float, bool]:
         if self.game_over:
             return 0.0, True
@@ -250,6 +436,13 @@ class SnakeGame:
                 self._save_high_score()
             reward = self.REWARD_FOOD
             ate_food = True
+            if self.is_board_full():
+                self.game_over = True
+                self.won = True
+                reward = self.win_reward()
+                self._ate_food = ate_food
+                self.steps += 1
+                return reward, True
             self.food = self._generate_food()
         else:
             self.snake.pop()
@@ -257,6 +450,26 @@ class SnakeGame:
         self.steps += 1
         self._ate_food = ate_food
         return reward, False
+
+    def rasterize_board(self, pad_width: int | None = None, pad_height: int | None = None) -> list[list[list[float]]]:
+        """返回 (C, H, W) 栅格观测：通道依次为蛇头、蛇身、食物。"""
+        pad_w = pad_width or self.width
+        pad_h = pad_height or self.height
+        channels = 3
+        grid = [[[0.0 for _ in range(pad_w)] for _ in range(pad_h)] for _ in range(channels)]
+
+        for segment in self.snake[1:]:
+            if segment.x < pad_w and segment.y < pad_h:
+                grid[1][segment.y][segment.x] = 1.0
+
+        head = self.snake[0]
+        if head.x < pad_w and head.y < pad_h:
+            grid[0][head.y][head.x] = 1.0
+
+        if self.food.x < pad_w and self.food.y < pad_h:
+            grid[2][self.food.y][self.food.x] = 1.0
+
+        return grid
 
     def extract_features(self) -> list[float]:
         head = self.snake[0]
@@ -278,26 +491,9 @@ class SnakeGame:
             self._is_collision(left_pos, will_grow=self._will_grow_at(left_pos))
         )
 
-        food_dx = self.food.x - head.x
-        food_dy = self.food.y - head.y
-
-        food_ahead = food_left = food_right = 0.0
-        if direction == Direction.UP:
-            food_ahead = float(food_dy < 0)
-            food_left = float(food_dx < 0)
-            food_right = float(food_dx > 0)
-        elif direction == Direction.RIGHT:
-            food_ahead = float(food_dx > 0)
-            food_left = float(food_dy < 0)
-            food_right = float(food_dy > 0)
-        elif direction == Direction.DOWN:
-            food_ahead = float(food_dy > 0)
-            food_left = float(food_dx > 0)
-            food_right = float(food_dx < 0)
-        else:
-            food_ahead = float(food_dx < 0)
-            food_left = float(food_dy > 0)
-            food_right = float(food_dy < 0)
+        food_ahead, food_left, food_right = self._relative_direction_flags(
+            self.food.x - head.x, self.food.y - head.y, direction
+        )
 
         return [
             danger_ahead,
@@ -310,6 +506,8 @@ class SnakeGame:
             float(direction == Direction.RIGHT),
             float(direction == Direction.DOWN),
             float(direction == Direction.LEFT),
+            *self._ray_features(head),
+            *self._spatial_features(head, direction),
         ]
 
     def _load_high_score(self) -> int:

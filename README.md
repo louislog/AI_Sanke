@@ -3,7 +3,7 @@
 [![Stars](https://img.shields.io/github/stars/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/stargazers)
 [![Forks](https://img.shields.io/github/forks/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/network/members)
 [![Issues](https://img.shields.io/github/issues/louislog/AI_Sanke?style=flat-square)](https://github.com/louislog/AI_Sanke/issues)
-[![License](https://img.shields.io/github/license/louislog/AI_Sanke?style=flat-square)](#许可证)
+[![License](https://img.shields.io/github/license/louislog/AI_Sanke?style=flat-square)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Gymnasium](https://img.shields.io/badge/Gymnasium-1.0%2B-0f9d58?style=flat-square)](https://gymnasium.farama.org/)
 [![Stable-Baselines3](https://img.shields.io/badge/Stable--Baselines3-PPO-ff6f00?style=flat-square)](https://stable-baselines3.readthedocs.io/)
@@ -47,7 +47,7 @@ python test_env.py --render
 ### 训练
 
 ```bash
-python train.py --n-envs 16 --total-timesteps 2000000 --save-freq 50000
+python train.py --curriculum --n-envs 32 --total-timesteps 5000000 --save-freq 100000
 ```
 
 检查点与 TensorBoard 日志保存在 `tmp/`。评估最优模型保存在 `tmp/best/best_model.zip`。
