@@ -2,13 +2,20 @@
 
 所有函数都基于纯数据（坐标元组），与游戏渲染解耦，便于单测与复用。
 坐标约定：(x, y)，x 向右增长，y 向下增长。
+
+高频路径（训练 step / obs 构造）优先使用 numpy 数组实现，避免每步分配 dict/set。
 """
 
 from collections import deque
 from heapq import heappop, heappush
 from typing import Iterable
 
+import numpy as np
+
 Coord = tuple[int, int]
+
+# 四邻方向：(dy, dx) 便于直接索引 array[y, x]
+_NEIGHBOR_OFFSETS = np.array([(0, -1), (0, 1), (-1, 0), (1, 0)], dtype=np.int32)
 
 CARDINAL_DELTAS: tuple[Coord, ...] = ((0, -1), (1, 0), (0, 1), (-1, 0))
 
@@ -111,6 +118,141 @@ def bfs_distance_field(
             dist[nxt] = dist[current] + 1
             queue.append(nxt)
     return dist
+
+
+def blocked_mask_from_coords(
+    blocked: Iterable[Coord],
+    width: int,
+    height: int,
+    *,
+    out: np.ndarray | None = None,
+) -> np.ndarray:
+    """将障碍坐标集合转为 (height, width) bool 掩码。"""
+    if out is not None:
+        mask = out
+        mask.fill(False)
+    else:
+        mask = np.zeros((height, width), dtype=np.bool_)
+    for x, y in blocked:
+        if 0 <= x < width and 0 <= y < height:
+            mask[y, x] = True
+    return mask
+
+
+def bfs_distance_field_array(
+    sources: Iterable[Coord],
+    blocked: np.ndarray,
+    width: int,
+    height: int,
+    *,
+    out_dist: np.ndarray | None = None,
+) -> np.ndarray:
+    """多源 BFS 距离场，返回 (height, width) int32；不可达格为 -1。"""
+    dist = (
+        out_dist
+        if out_dist is not None
+        else np.zeros((height, width), dtype=np.int32)
+    )
+    dist.fill(-1)
+
+    queue: deque[tuple[int, int]] = deque()
+    for sx, sy in sources:
+        if 0 <= sx < width and 0 <= sy < height and not blocked[sy, sx]:
+            if dist[sy, sx] < 0:
+                dist[sy, sx] = 0
+                queue.append((sx, sy))
+
+    while queue:
+        x, y = queue.popleft()
+        d = dist[y, x]
+        for dy, dx in _NEIGHBOR_OFFSETS:
+            nx, ny = x + dx, y + dy
+            if nx < 0 or nx >= width or ny < 0 or ny >= height:
+                continue
+            if blocked[ny, nx] or dist[ny, nx] >= 0:
+                continue
+            dist[ny, nx] = d + 1
+            queue.append((nx, ny))
+    return dist
+
+
+def fill_normalized_distance_channel(
+    channel: np.ndarray,
+    sources: Iterable[Coord],
+    blocked: np.ndarray,
+    width: int,
+    height: int,
+    max_dist: int,
+    *,
+    dist_buf: np.ndarray | None = None,
+) -> None:
+    """将 1 - d/max_dist 写入 channel[:height, :width]；不可达为 0。"""
+    region = channel[:height, :width]
+    region.fill(0.0)
+    dist = bfs_distance_field_array(
+        sources, blocked, width, height, out_dist=dist_buf
+    )
+    reachable = dist >= 0
+    if not np.any(reachable):
+        return
+    norm = 1.0 - np.minimum(dist[reachable], max_dist).astype(np.float32) / float(
+        max_dist
+    )
+    region[reachable] = norm
+
+
+def reachable_ratio_numpy(
+    start: Coord,
+    blocked: set[Coord],
+    width: int,
+    height: int,
+    *,
+    blocked_mask: np.ndarray | None = None,
+    visited_buf: np.ndarray | None = None,
+) -> float:
+    """从 start 出发 flood fill，返回可达空格 / 总空格比例。"""
+    sx, sy = start
+    if not in_bounds(start, width, height):
+        return 0.0
+
+    mask = blocked_mask
+    if mask is None:
+        mask = blocked_mask_from_coords(blocked, width, height)
+    else:
+        mask.fill(False)
+        for x, y in blocked:
+            if 0 <= x < width and 0 <= y < height:
+                mask[y, x] = True
+
+    free_cells = int((~mask).sum())
+    if free_cells == 0:
+        return 0.0
+    if mask[sy, sx]:
+        return 0.0
+
+    visited = (
+        visited_buf
+        if visited_buf is not None
+        else np.zeros((height, width), dtype=np.bool_)
+    )
+    visited.fill(False)
+    queue: deque[tuple[int, int]] = deque([(sx, sy)])
+    visited[sy, sx] = True
+    count = 1
+
+    while queue:
+        x, y = queue.popleft()
+        for dy, dx in _NEIGHBOR_OFFSETS:
+            nx, ny = x + dx, y + dy
+            if nx < 0 or nx >= width or ny < 0 or ny >= height:
+                continue
+            if mask[ny, nx] or visited[ny, nx]:
+                continue
+            visited[ny, nx] = True
+            count += 1
+            queue.append((nx, ny))
+
+    return count / free_cells
 
 
 def flood_fill_count(

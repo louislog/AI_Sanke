@@ -68,13 +68,16 @@ def build_model(
     obs_mode: str = "grid_full",
     features_dim: int = 512,
     tensorboard_log: str | None = None,
+    device: str = "auto",
     n_steps: int = 4096,
     batch_size: int = 512,
     n_epochs: int = 10,
     learning_rate: float = 2.5e-4,
     gamma: float = 0.995,
+    gae_lambda: float = 0.95,
     ent_coef: float = 0.01,
     buffer_size: int = 200_000,
+    learning_starts: int = 10_000,
     verbose: int = 1,
 ):
     algo = algo.lower()
@@ -92,13 +95,13 @@ def build_model(
             env=vec_env,
             verbose=verbose,
             tensorboard_log=tensorboard_log,
-            device="auto",
+            device=device,
             n_steps=n_steps,
             batch_size=batch_size,
             n_epochs=n_epochs,
             learning_rate=learning_rate,
             gamma=gamma,
-            gae_lambda=0.95,
+            gae_lambda=gae_lambda,
             ent_coef=ent_coef,
             vf_coef=1.0,
             max_grad_norm=0.5,
@@ -114,12 +117,12 @@ def build_model(
         env=vec_env,
         verbose=verbose,
         tensorboard_log=tensorboard_log,
-        device="auto",
+        device=device,
         learning_rate=learning_rate,
         gamma=gamma,
         buffer_size=buffer_size,
         batch_size=batch_size,
-        learning_starts=10_000,
+        learning_starts=learning_starts,
         train_freq=4,
         target_update_interval=5_000,
         exploration_fraction=0.2,
@@ -128,7 +131,7 @@ def build_model(
     )
 
 
-def load_model(model_path: str, algo: str = "auto", env=None):
+def load_model(model_path: str, algo: str = "auto", env=None, device: str = "auto"):
     """加载 checkpoint。algo='auto' 时按注册表依次尝试。"""
     if not os.path.exists(model_path) and not os.path.exists(model_path + ".zip"):
         raise FileNotFoundError(f"模型文件不存在: {model_path}")
@@ -137,7 +140,7 @@ def load_model(model_path: str, algo: str = "auto", env=None):
         algo = algo.lower()
         if algo not in ALGO_REGISTRY:
             raise ValueError(f"未知算法: {algo}，可用 {available_algos()}")
-        return ALGO_REGISTRY[algo].load(model_path, env=env)
+        return ALGO_REGISTRY[algo].load(model_path, env=env, device=device)
 
     order = ["maskable_ppo", "ppo", "qrdqn", "dqn", "recurrent_ppo"]
     errors: list[str] = []
@@ -146,7 +149,7 @@ def load_model(model_path: str, algo: str = "auto", env=None):
         if cls is None:
             continue
         try:
-            return cls.load(model_path, env=env)
+            return cls.load(model_path, env=env, device=device)
         except Exception as exc:  # noqa: BLE001 - 尝试下一个算法
             errors.append(f"{name}: {exc}")
     raise ValueError(f"无法加载模型 {model_path}，尝试记录:\n" + "\n".join(errors))

@@ -71,8 +71,25 @@ _BITMAP_STYLE_SCALE = {
     "title": 2,
     "label": 2,
     "value": 2,
+    "value_compact": 2,
     "overlay": 2,
 }
+
+# PingFang SC / STHeiti often render CJK as hollow tofu boxes under SDL_ttf.
+_FONT_CANDIDATES_DARWIN = (
+    "Hiragino Sans GB",
+    "PingFang SC",
+    "STHeiti",
+    "Arial Unicode MS",
+    "sans-serif",
+)
+_FONT_CANDIDATES_DEFAULT = (
+    "Microsoft YaHei",
+    "Noto Sans CJK SC",
+    "WenQuanYi Micro Hei",
+    "Arial Unicode MS",
+    "sans-serif",
+)
 
 
 class Direction(IntEnum):
@@ -124,7 +141,9 @@ class SnakeGame:
     COLOR_BG = (18, 22, 30)
     COLOR_BG_ALT = (22, 27, 36)
     COLOR_GRID = (34, 40, 52)
-    COLOR_SNAKE_HEAD = (72, 210, 150)
+    COLOR_SNAKE_HEAD = (110, 245, 185)
+    COLOR_SNAKE_HEAD_GLOW = (72, 220, 160)
+    COLOR_SNAKE_HEAD_OUTLINE = (210, 255, 235)
     COLOR_SNAKE_BODY = (48, 168, 115)
     COLOR_SNAKE_OUTLINE = (28, 100, 72)
     COLOR_FOOD = (255, 88, 88)
@@ -153,15 +172,18 @@ class SnakeGame:
         self._font_title = None
         self._font_label = None
         self._font_value = None
+        self._font_value_compact = None
         self._font_overlay = None
         self._fonts_available = False
+        self._cjk_available = False
+        self._hud_height = self.HUD_HEIGHT
         self.high_score = self._load_high_score()
         self.session_scores: list[int] = []
 
         self.board_width_px = self.width * self.CELL_SIZE
         self.board_height_px = self.height * self.CELL_SIZE
         self.surface_width_px = self.board_width_px
-        self.surface_height_px = self.board_height_px + self.HUD_HEIGHT
+        self._refresh_surface_metrics()
 
         if render_mode is not None:
             pygame = _get_pygame()
@@ -548,30 +570,69 @@ class SnakeGame:
         except OSError:
             pass
 
+    def _refresh_surface_metrics(self) -> None:
+        compact = self.surface_width_px < 300
+        self._hud_height = 64 if compact else self.HUD_HEIGHT
+        self.surface_height_px = self.board_height_px + self._hud_height
+
+    def _font_candidates(self) -> tuple[str, ...]:
+        if sys.platform == "darwin":
+            return _FONT_CANDIDATES_DARWIN
+        return _FONT_CANDIDATES_DEFAULT
+
+    def _font_supports_cjk(self, font) -> bool:
+        probe = font.render("国", True, (255, 255, 255))
+        return probe.get_width() >= 10 and probe.get_height() >= 8
+
+    def _resolve_sys_font(self, size: int, *, bold: bool = False, cjk: bool = False):
+        pygame = _get_pygame()
+        for name in self._font_candidates():
+            try:
+                font = pygame.font.SysFont(name, size, bold=bold)
+                font.render("A", True, (255, 255, 255))
+                if cjk and not self._font_supports_cjk(font):
+                    continue
+                return font
+            except (NotImplementedError, ImportError, OSError, AttributeError):
+                continue
+        return None
+
     def _init_fonts(self) -> None:
         pygame = _get_pygame()
         self._fonts_available = False
+        self._cjk_available = False
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 if not pygame.font.get_init():
                     pygame.font.init()
-                self._font_title = pygame.font.SysFont(
-                    "PingFang SC,Microsoft YaHei,Arial", 18, bold=True
-                )
-                self._font_label = pygame.font.SysFont(
-                    "PingFang SC,Microsoft YaHei,Arial", 13
-                )
-                self._font_value = pygame.font.SysFont("Menlo,Consolas,Arial", 20, bold=True)
-                self._font_overlay = pygame.font.SysFont(
-                    "PingFang SC,Microsoft YaHei,Arial", 22, bold=True
-                )
-                self._font_title.render("A", True, (255, 255, 255))
+
+                cjk_title = self._resolve_sys_font(18, bold=True, cjk=True)
+                cjk_label = self._resolve_sys_font(13, cjk=True)
+                cjk_overlay = self._resolve_sys_font(22, bold=True, cjk=True)
+                value_font = self._resolve_sys_font(20, bold=True)
+
+                if cjk_title and cjk_label and cjk_overlay:
+                    self._font_title = cjk_title
+                    self._font_label = cjk_label
+                    self._font_overlay = cjk_overlay
+                    self._cjk_available = True
+                else:
+                    self._font_title = self._resolve_sys_font(18, bold=True)
+                    self._font_label = self._resolve_sys_font(13)
+                    self._font_overlay = self._resolve_sys_font(22, bold=True)
+
+                self._font_value = value_font or self._resolve_sys_font(20, bold=True)
+                self._font_value_compact = self._resolve_sys_font(14, bold=True)
+                if self._font_title is None or self._font_label is None:
+                    raise OSError("no usable pygame font")
+
             self._fonts_available = True
         except (NotImplementedError, ImportError, OSError, AttributeError):
             self._font_title = None
             self._font_label = None
             self._font_value = None
+            self._font_value_compact = None
             self._font_overlay = None
 
     def _font_for_style(self, style: str):
@@ -579,10 +640,17 @@ class SnakeGame:
             "title": self._font_title,
             "label": self._font_label,
             "value": self._font_value,
+            "value_compact": self._font_value_compact or self._font_value,
             "overlay": self._font_overlay,
         }[style]
 
-    def _ui(self, key: str) -> str:
+    def _value_style_for_width(self, value: str, max_width: int) -> str:
+        for style in ("value_compact", "value"):
+            if self._text_width(value, style) <= max_width:
+                return style
+        return "value_compact"
+
+    def _ui(self, key: str, *, short: bool = False) -> str:
         catalog = {
             "title": ("贪吃蛇", "Snake"),
             "score": ("得分", "Score"),
@@ -594,9 +662,15 @@ class SnakeGame:
             "final_score": ("本局得分", "Score"),
             "high_score": ("历史最高", "Best"),
             "restart": ("按 R 重新开始", "Press R to restart"),
+            "score_short": ("分", "S"),
+            "best_short": ("高", "B"),
+            "length_short": ("长", "L"),
+            "steps_short": ("步", "T"),
+            "session_best_short": ("局", "G"),
         }
-        zh, en = catalog[key]
-        return zh if self._fonts_available else en
+        lookup_key = f"{key}_short" if short and f"{key}_short" in catalog else key
+        zh, en = catalog[lookup_key]
+        return zh if self._cjk_available else en
 
     def _bitmap_char(self, char: str) -> str:
         if char in _BITMAP_FONT:
@@ -660,7 +734,26 @@ class SnakeGame:
             cursor_x += 6 * scale
 
     def _board_origin_y(self) -> int:
-        return self.HUD_HEIGHT
+        return self._hud_height
+
+    def _hud_stats(self) -> list[tuple[str, str, str]]:
+        keys = ["score", "best", "length", "steps"]
+        if self.session_scores:
+            keys.append("session_best")
+        stats: list[tuple[str, str, str]] = []
+        for key in keys:
+            if key == "score":
+                value = str(self.score)
+            elif key == "best":
+                value = str(self.high_score)
+            elif key == "length":
+                value = str(len(self.snake))
+            elif key == "steps":
+                value = str(self.steps)
+            else:
+                value = str(max([*self.session_scores, self.score]))
+            stats.append((key, value, self._ui(key)))
+        return stats
 
     def _cell_center(self, pos: Position, origin_y: int) -> tuple[int, int]:
         cell = self.CELL_SIZE
@@ -671,38 +764,69 @@ class SnakeGame:
 
     def _draw_hud(self) -> None:
         pygame = _get_pygame()
-        hud_rect = pygame.Rect(0, 0, self.surface_width_px, self.HUD_HEIGHT)
+        hud_height = self._hud_height
+        hud_rect = pygame.Rect(0, 0, self.surface_width_px, hud_height)
         pygame.draw.rect(self.surface, self.COLOR_HUD_BG, hud_rect)
         pygame.draw.line(
             self.surface,
             self.COLOR_HUD_BORDER,
-            (0, self.HUD_HEIGHT - 1),
-            (self.surface_width_px, self.HUD_HEIGHT - 1),
+            (0, hud_height - 1),
+            (self.surface_width_px, hud_height - 1),
         )
 
+        stats = self._hud_stats()
+        compact = self.surface_width_px < 300
+        title_text = self._ui("title")
+
+        if compact:
+            title_y = 6
+            self._draw_text(
+                title_text,
+                y=title_y,
+                color=self.COLOR_HUD_ACCENT,
+                style="title",
+                center_x=self.surface_width_px // 2,
+            )
+            label_y = 28
+            value_y = 44
+            col_width = max(28, self.surface_width_px // len(stats))
+            start_x = (self.surface_width_px - col_width * len(stats)) // 2
+            for index, (key, value, _) in enumerate(stats):
+                x = start_x + index * col_width
+                label = self._ui(key, short=True)
+                value_style = self._value_style_for_width(value, col_width - 2)
+                self._draw_text(
+                    label,
+                    x=x + (col_width - self._text_width(label, "label")) // 2,
+                    y=label_y,
+                    color=self.COLOR_HUD_LABEL,
+                    style="label",
+                )
+                self._draw_text(
+                    value,
+                    x=x + (col_width - self._text_width(value, value_style)) // 2,
+                    y=value_y,
+                    color=self.COLOR_HUD_TEXT,
+                    style=value_style,
+                )
+            return
+
+        title_width = self._text_width(title_text, "title")
+        reserved_title = title_width + 20
+        col_width = max(52, (self.surface_width_px - reserved_title - 12) // len(stats))
+        stats_width = col_width * len(stats)
+        start_x = max(reserved_title, self.surface_width_px - stats_width - 8)
+
         self._draw_text(
-            self._ui("title"),
+            title_text,
             x=12,
-            y=8,
+            y=10,
             color=self.COLOR_HUD_ACCENT,
             style="title",
         )
 
-        stats = [
-            (self._ui("score"), str(self.score)),
-            (self._ui("best"), str(self.high_score)),
-            (self._ui("length"), str(len(self.snake))),
-            (self._ui("steps"), str(self.steps)),
-        ]
-        if self.session_scores:
-            session_best = max([*self.session_scores, self.score])
-            stats.append((self._ui("session_best"), str(session_best)))
-
-        stat_width = max(88, (self.surface_width_px - 120) // len(stats))
-        start_x = max(96, self.surface_width_px - stat_width * len(stats) - 8)
-
-        for index, (label, value) in enumerate(stats):
-            x = start_x + index * stat_width
+        for index, (key, value, label) in enumerate(stats):
+            x = start_x + index * col_width
             self._draw_text(label, x=x, y=10, color=self.COLOR_HUD_LABEL, style="label")
             self._draw_text(value, x=x, y=26, color=self.COLOR_HUD_TEXT, style="value")
 
@@ -764,40 +888,59 @@ class SnakeGame:
         index: int,
         total: int,
         origin_y: int,
+        is_head: bool = False,
     ) -> None:
         pygame = _get_pygame()
         cell = self.CELL_SIZE
-        padding = 2
+        padding = 1 if is_head else 2
         rect = pygame.Rect(
             segment.x * cell + padding,
             origin_y + segment.y * cell + padding,
             cell - padding * 2,
             cell - padding * 2,
         )
-        radius = max(3, cell // 4)
+        radius = max(3, cell // 3 if is_head else cell // 4)
 
-        if index == 0:
+        if is_head:
+            glow_rect = rect.inflate(4, 4)
+            glow = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
+            pygame.draw.rect(
+                glow,
+                (*self.COLOR_SNAKE_HEAD_GLOW, 90),
+                glow.get_rect(),
+                border_radius=radius + 2,
+            )
+            self.surface.blit(glow, glow_rect.topleft)
             color = self.COLOR_SNAKE_HEAD
+            outline_color = self.COLOR_SNAKE_HEAD_OUTLINE
         else:
             blend = index / max(total - 1, 1)
             color = tuple(
                 int(self.COLOR_SNAKE_HEAD[i] * (1 - blend * 0.35) + self.COLOR_SNAKE_BODY[i] * (blend * 0.35))
                 for i in range(3)
             )
+            outline_color = self.COLOR_SNAKE_OUTLINE
 
-        pygame.draw.rect(self.surface, self.COLOR_SNAKE_OUTLINE, rect, border_radius=radius)
+        pygame.draw.rect(self.surface, outline_color, rect, border_radius=radius)
         inner = rect.inflate(-2, -2)
         pygame.draw.rect(self.surface, color, inner, border_radius=max(2, radius - 1))
 
-        if index == 0:
+        if is_head:
+            pygame.draw.rect(
+                self.surface,
+                self.COLOR_SNAKE_HEAD_OUTLINE,
+                inner,
+                width=1,
+                border_radius=max(2, radius - 1),
+            )
             self._draw_snake_eyes(inner)
 
     def _draw_snake_eyes(self, head_rect: "pygame_types.Rect") -> None:
         pygame = _get_pygame()
         cx = head_rect.centerx
         cy = head_rect.centery
-        eye_r = max(2, self.CELL_SIZE // 7)
-        offset = self.CELL_SIZE // 5
+        eye_r = max(2, self.CELL_SIZE // 6)
+        offset = max(3, self.CELL_SIZE // 4)
 
         if self.direction == Direction.UP:
             positions = [(cx - offset, cy + offset // 2), (cx + offset, cy + offset // 2)]
@@ -811,6 +954,25 @@ class SnakeGame:
         for eye_pos in positions:
             pygame.draw.circle(self.surface, (240, 250, 245), eye_pos, eye_r)
             pygame.draw.circle(self.surface, (20, 30, 25), eye_pos, max(1, eye_r // 2))
+
+        nose_len = max(3, self.CELL_SIZE // 5)
+        if self.direction == Direction.UP:
+            tip = (cx, head_rect.top + 2)
+            base_y = tip[1] + nose_len
+            points = [(tip[0], tip[1]), (tip[0] - 3, base_y), (tip[0] + 3, base_y)]
+        elif self.direction == Direction.DOWN:
+            tip = (cx, head_rect.bottom - 2)
+            base_y = tip[1] - nose_len
+            points = [(tip[0], tip[1]), (tip[0] - 3, base_y), (tip[0] + 3, base_y)]
+        elif self.direction == Direction.LEFT:
+            tip = (head_rect.left + 2, cy)
+            base_x = tip[0] + nose_len
+            points = [(tip[0], tip[1]), (base_x, tip[1] - 3), (base_x, tip[1] + 3)]
+        else:
+            tip = (head_rect.right - 2, cy)
+            base_x = tip[0] - nose_len
+            points = [(tip[0], tip[1]), (base_x, tip[1] - 3), (base_x, tip[1] + 3)]
+        pygame.draw.polygon(self.surface, (235, 255, 245), points)
 
     def _draw_game_over_overlay(self, origin_y: int) -> None:
         pygame = _get_pygame()
@@ -835,7 +997,7 @@ class SnakeGame:
         if self.session_scores:
             session_best = max(self.session_scores)
             session_avg = sum(self.session_scores) / len(self.session_scores)
-            if self._fonts_available:
+            if self._cjk_available:
                 session_line = (
                     f"本次会话  {len(self.session_scores)} 局 · 最佳 {session_best} · 均分 {session_avg:.1f}"
                 )
@@ -874,13 +1036,20 @@ class SnakeGame:
         self._draw_food(origin_y)
 
         total_segments = len(self.snake)
-        for index, segment in enumerate(self.snake):
+        for index, segment in enumerate(self.snake[1:], start=1):
             self._draw_snake_segment(
                 segment,
                 index=index,
                 total=total_segments,
                 origin_y=origin_y,
             )
+        self._draw_snake_segment(
+            self.snake[0],
+            index=0,
+            total=total_segments,
+            origin_y=origin_y,
+            is_head=True,
+        )
 
         if self.game_over:
             self._draw_game_over_overlay(origin_y)

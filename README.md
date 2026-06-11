@@ -12,6 +12,7 @@
 不局限于单一 RL 算法，而是提供 **规则 / 搜索 / 混合 / 强化学习 / 模仿学习** 多条算法路线，
 配套统一的训练、评估、可视化与失败分析工具链。
 
+![演示demo](demo.gif)
 ## 当前基线成绩（每尺寸 20 局）
 
 | 策略 | 6x6 | 8x8 | 10x10 | 12x12 | 平均覆盖率 |
@@ -104,9 +105,54 @@ uv run python train.py --algo qrdqn ...
 # 覆盖率达标即提前进入下一课程阶段
 uv run python train.py --curriculum --coverage-threshold 0.9 ...
 
-# 评估
+# 评估（完整评估请用 eval.py，训练中默认轻量 eval）
 uv run python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
 ```
+
+#### 快速训练 / GPU / 多进程
+
+本项目瓶颈通常在 **环境 step + BFS/flood fill 奖励与观测**，而非神经网络。
+优先用 `--vec-env subproc` 并行采样，再按需启用 GPU。
+
+| 场景 | 推荐命令 |
+|------|---------|
+| **Mac M 系列 CPU 快速调试**（小图） | `uv run python train.py --grid-size 6 --n-envs 8 --vec-env subproc --total-timesteps 200000 --no-eval --eval-freq 999999999` |
+| **Mac M 系列正式训练** | `uv run python train.py --device mps --vec-env subproc --n-envs 16 --grid-size 10 --curriculum --curriculum-sizes 6,8,10` |
+| **Linux + NVIDIA GPU** | `uv run python train.py --device cuda --cuda-device 0 --vec-env subproc --n-envs 32 --grid-size 10 --curriculum` |
+| **CPU 多进程最大化采样** | `uv run python train.py --device cpu --vec-env subproc --n-envs 32 --safety-check-interval 2` |
+| **长时间正式训练** | `uv run python train.py --algo maskable_ppo --curriculum --grid-size 12 --total-timesteps 10000000 --save-freq 500000 --eval-freq 500000 --n-eval-episodes 10` |
+
+**Profiling 与吞吐：**
+
+```bash
+# 仅测环境 step（不含神经网络）
+uv run python profiling.py --steps 3000 --grid-size 10
+
+# 观测构造 benchmark
+uv run python bench_obs.py --steps 500 --grid-size 10
+
+# 训练时开启 profiling（终端会打印 env/reward/obs 耗时与 FPS）
+uv run python train.py --profile --total-timesteps 50000 --no-eval
+```
+
+**验证 SubprocVecEnv 是否生效：** 训练启动日志会打印 `Vec env: SubprocVecEnv (subproc, n_envs=...)`。
+也可在 `--profile` 模式下观察 CPU 多核利用率（建议 `pip install psutil`）。
+
+**查看训练 FPS：** SB3 终端 `time/fps` 或 TensorBoard `time/fps`；`--profile` 时额外打印 `model throughput`。
+
+**主要训练参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `--device auto/cpu/cuda/mps` | 训练设备（CUDA 不可用时会明确提示原因） |
+| `--vec-env dummy/subproc` | 向量化后端（默认 `subproc`） |
+| `--n-envs` | 并行环境数 |
+| `--safety-check-interval` | flood fill 惩罚计算间隔（默认按地图尺寸） |
+| `--eval-freq` / `--n-eval-episodes` | 训练中轻量评估频率与局数 |
+| `--no-eval` | 关闭训练中评估，完整评估交给 `eval.py` |
+| `--save-freq` / `--log-interval` | checkpoint 与 TensorBoard 日志频率 |
+| `--torch-compile true` | 可选编译 policy（实验性） |
+| `--profile` | 启用训练 profiling |
 
 观测模式（`--obs-mode`）：
 

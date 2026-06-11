@@ -11,14 +11,32 @@
 四种预设，方便消融实验。
 """
 
+import time
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from gymnasium import Env, spaces
 
-from policies.grid_utils import bfs_distance_field, bfs_path
+from policies.grid_utils import (
+    bfs_path,
+    blocked_mask_from_coords,
+    fill_normalized_distance_channel,
+    reachable_ratio_numpy,
+)
 from snake_game import SnakeGame
+
+if TYPE_CHECKING:
+    from profiling import ProfileStats
+
+
+def default_safety_check_interval(grid_size: int) -> int:
+    """按地图尺寸给出安全指标（reachable / tail）默认计算间隔。"""
+    if grid_size <= 8:
+        return 1
+    if grid_size <= 12:
+        return 2
+    return 4
 
 
 @dataclass
@@ -118,6 +136,7 @@ class SnakeEnv(Env):
         obs_mode: ObsMode = "grid",
         grid_pad_size: int | None = None,
         reward: RewardConfig | str | None = "default",
+        safety_check_interval: int | None = None,
     ):
         super().__init__()
         self.width = width
@@ -127,13 +146,29 @@ class SnakeEnv(Env):
         self.obs_mode = obs_mode
         self.grid_pad_size = grid_pad_size or max(width, height)
         self.reward_config = resolve_reward_config(reward)
+        self.safety_check_interval = safety_check_interval
         self.game = SnakeGame(width=width, height=height, render_mode=render_mode)
 
         self._episode_steps = 0
         self._prev_food_bfs: int | None = None
         self._prev_reachable_ratio = 1.0
+        self._cached_reachable_ratio = 1.0
         self._last_milestone = 0
         self._ham_index_map = self._build_ham_index_map()
+        self._profiler: ProfileStats | None = None
+
+        # grid_full 观测预分配缓冲，避免每步重复分配
+        self._obs_buffer: np.ndarray | None = None
+        self._blocked_mask: np.ndarray | None = None
+        self._dist_buf: np.ndarray | None = None
+        self._visited_buf: np.ndarray | None = None
+        if self.obs_mode == "grid_full":
+            size = self.grid_pad_size
+            self._obs_buffer = np.zeros((8, size, size), dtype=np.float32)
+            self._blocked_mask = np.zeros((self.height, self.width), dtype=np.bool_)
+            self._dist_buf = np.zeros((self.height, self.width), dtype=np.int32)
+            self._visited_buf = np.zeros((self.height, self.width), dtype=np.bool_)
+            self._init_static_obs_channels()
 
         self.action_space = spaces.Discrete(3)
         self.observation_space = self._make_observation_space()
@@ -168,6 +203,55 @@ class SnakeEnv(Env):
             index_map[y, x] = i / denom
         return index_map
 
+    def attach_profiler(self, profiler: "ProfileStats") -> None:
+        self._profiler = profiler
+
+    def _resolved_safety_interval(self) -> int:
+        if self.safety_check_interval is not None:
+            return max(1, self.safety_check_interval)
+        return default_safety_check_interval(max(self.width, self.height))
+
+    def _need_safety_metrics(self, ate_food: bool) -> bool:
+        """是否在奖励阶段计算 flood fill / tail reachable 等重型指标。"""
+        cfg = self.reward_config
+        needs_trap = cfg.trap_penalty_scale > 0
+        needs_tail = cfg.tail_unreachable_penalty > 0 and ate_food
+        if not needs_trap and not needs_tail:
+            return False
+        if ate_food:
+            return True
+        snake_len = len(self.game.snake)
+        if snake_len < 4:
+            return False
+        interval = self._resolved_safety_interval()
+        return self._episode_steps % interval == 0
+
+    def _init_static_obs_channels(self) -> None:
+        """棋盘掩码与 Hamiltonian 场在 episode 内不变，初始化一次。"""
+        assert self._obs_buffer is not None
+        self._obs_buffer[4].fill(0.0)
+        self._obs_buffer[4, : self.height, : self.width] = 1.0
+        self._obs_buffer[7].fill(0.0)
+        if self._ham_index_map is not None:
+            self._obs_buffer[7, : self.height, : self.width] = self._ham_index_map
+
+    def _compute_reachable_ratio(self) -> float:
+        t0 = time.perf_counter()
+        snake = self.game.snake
+        head = snake[0]
+        blocked = {(seg.x, seg.y) for seg in snake[1:-1]}
+        ratio = reachable_ratio_numpy(
+            (head.x, head.y),
+            blocked,
+            self.width,
+            self.height,
+            blocked_mask=self._blocked_mask,
+            visited_buf=self._visited_buf,
+        )
+        if self._profiler is not None:
+            self._profiler.flood_fill_s += time.perf_counter() - t0
+        return ratio
+
     # ---- Gym API ----
 
     def reset(self, *, seed=None, options=None):
@@ -175,7 +259,8 @@ class SnakeEnv(Env):
         self.game.reset(seed=seed)
         self._episode_steps = 0
         self._prev_food_bfs = self.game.food_bfs_distance()
-        self._prev_reachable_ratio = self.game.reachable_ratio()
+        self._prev_reachable_ratio = self._compute_reachable_ratio()
+        self._cached_reachable_ratio = self._prev_reachable_ratio
         self._last_milestone = 0
         return self._get_obs(), self._get_info()
 
@@ -185,8 +270,13 @@ class SnakeEnv(Env):
         prev_bfs = self._prev_food_bfs
         prev_coverage = self.game.coverage_ratio()
 
+        t_game = time.perf_counter()
         _, terminated = self.game.step(int(action))
+        if self._profiler is not None:
+            self._profiler.game_step_s += time.perf_counter() - t_game
+
         ate_food = getattr(self.game, "_ate_food", False)
+        t_reward = time.perf_counter()
 
         reward = -cfg.step_penalty
         if terminated:
@@ -205,19 +295,38 @@ class SnakeEnv(Env):
                 if cfg.tail_unreachable_penalty > 0 and not self._tail_reachable():
                     reward -= cfg.tail_unreachable_penalty
 
-            curr_bfs = self.game.food_bfs_distance()
-            reward += self._bfs_distance_shaping(prev_bfs, curr_bfs)
-            self._prev_food_bfs = curr_bfs
+            if cfg.distance_reward_scale > 0 and self._distance_shaping_active():
+                curr_bfs = self.game.food_bfs_distance()
+                reward += self._bfs_distance_shaping(prev_bfs, curr_bfs)
+                self._prev_food_bfs = curr_bfs
+            else:
+                self._prev_food_bfs = prev_bfs
 
-            curr_reachable = self.game.reachable_ratio()
-            drop = self._prev_reachable_ratio - curr_reachable
-            if cfg.trap_penalty_scale > 0 and drop > cfg.trap_drop_threshold:
-                reward -= cfg.trap_penalty_scale * drop
-            self._prev_reachable_ratio = curr_reachable
+            if cfg.trap_penalty_scale > 0:
+                if self._need_safety_metrics(ate_food):
+                    curr_reachable = self._compute_reachable_ratio()
+                    self._cached_reachable_ratio = curr_reachable
+                else:
+                    curr_reachable = self._cached_reachable_ratio
+                drop = self._prev_reachable_ratio - curr_reachable
+                if drop > cfg.trap_drop_threshold:
+                    reward -= cfg.trap_penalty_scale * drop
+                if self._need_safety_metrics(ate_food):
+                    self._prev_reachable_ratio = curr_reachable
+
+        if self._profiler is not None:
+            self._profiler.reward_s += time.perf_counter() - t_reward
 
         self._episode_steps += 1
         truncated = not terminated and self._episode_steps >= self.max_steps
         return self._get_obs(), reward, terminated, truncated, self._get_info()
+
+    def _distance_shaping_active(self) -> bool:
+        cfg = self.reward_config
+        threshold = cfg.distance_shaping_length_threshold
+        if threshold is None:
+            return True
+        return len(self.game.snake) <= threshold
 
     def action_masks(self) -> np.ndarray:
         return np.asarray(self.game.valid_action_mask(), dtype=bool)
@@ -243,14 +352,19 @@ class SnakeEnv(Env):
     # ---- 奖励组件 ----
 
     def _tail_reachable(self) -> bool:
+        t0 = time.perf_counter()
         snake = [(seg.x, seg.y) for seg in self.game.snake]
         if len(snake) < 3:
-            return True
-        blocked = set(snake[1:-1])
-        return (
-            bfs_path(snake[0], snake[-1], blocked, self.width, self.height)
-            is not None
-        )
+            ok = True
+        else:
+            blocked = set(snake[1:-1])
+            ok = (
+                bfs_path(snake[0], snake[-1], blocked, self.width, self.height)
+                is not None
+            )
+        if self._profiler is not None:
+            self._profiler.tail_check_s += time.perf_counter() - t0
+        return ok
 
     def _bfs_distance_shaping(
         self, prev_bfs: int | None, curr_bfs: int | None
@@ -279,52 +393,83 @@ class SnakeEnv(Env):
     # ---- 观测 ----
 
     def _get_obs(self) -> np.ndarray:
+        t0 = time.perf_counter()
         if self.obs_mode == "grid":
             grid = self.game.rasterize_board(
                 pad_width=self.grid_pad_size,
                 pad_height=self.grid_pad_size,
             )
-            return np.asarray(grid, dtype=np.float32)
-        if self.obs_mode == "grid_full":
-            return self._full_grid_obs()
-        return np.asarray(self.game.extract_features(), dtype=np.float32)
+            obs = np.asarray(grid, dtype=np.float32)
+        elif self.obs_mode == "grid_full":
+            obs = self._full_grid_obs()
+        else:
+            obs = np.asarray(self.game.extract_features(), dtype=np.float32)
+        if self._profiler is not None:
+            self._profiler.obs_s += time.perf_counter() - t0
+        return obs
 
     def _full_grid_obs(self) -> np.ndarray:
-        size = self.grid_pad_size
-        obs = np.zeros((8, size, size), dtype=np.float32)
-        game = self.game
+        assert self._obs_buffer is not None
+        assert self._blocked_mask is not None
+        assert self._dist_buf is not None
+
+        obs = self._obs_buffer
         w, h = self.width, self.height
-        snake = [(seg.x, seg.y) for seg in game.snake]
-        head, tail = snake[0], snake[-1]
-        food = (game.food.x, game.food.y)
-
-        # 0 蛇头 / 1 蛇身 / 2 食物
-        obs[0, head[1], head[0]] = 1.0
-        for x, y in snake[1:]:
-            obs[1, y, x] = 1.0
-        obs[2, food[1], food[0]] = 1.0
-
-        # 3 蛇身顺序场：头 1.0 -> 尾递减
+        game = self.game
+        snake = game.snake
         n = len(snake)
-        for i, (x, y) in enumerate(snake):
-            obs[3, y, x] = (n - i) / n
+        head = snake[0]
+        tail = snake[-1]
+        food = game.food
 
-        # 4 棋盘掩码：实际棋盘为 1，padding（墙外）为 0
-        obs[4, :h, :w] = 1.0
+        # 仅清零动态通道 0-3, 5-6；4/7 为静态
+        obs[0].fill(0.0)
+        obs[1].fill(0.0)
+        obs[2].fill(0.0)
+        obs[3].fill(0.0)
+        obs[5].fill(0.0)
+        obs[6].fill(0.0)
 
-        # 5/6 BFS 距离场（被身体阻挡，不可达为 0）
-        blocked = set(snake[1:-1])
+        obs[0, head.y, head.x] = 1.0
+        if n > 1:
+            body_x = np.fromiter((seg.x for seg in snake[1:]), dtype=np.int32, count=n - 1)
+            body_y = np.fromiter((seg.y for seg in snake[1:]), dtype=np.int32, count=n - 1)
+            obs[1, body_y, body_x] = 1.0
+        obs[2, food.y, food.x] = 1.0
+
+        order = np.linspace(1.0, 1.0 / n, n, dtype=np.float32)
+        all_x = np.fromiter((seg.x for seg in snake), dtype=np.int32, count=n)
+        all_y = np.fromiter((seg.y for seg in snake), dtype=np.int32, count=n)
+        obs[3, all_y, all_x] = order
+
+        blocked_mask_from_coords(
+            ((seg.x, seg.y) for seg in snake[1:-1]),
+            w,
+            h,
+            out=self._blocked_mask,
+        )
         max_dist = w * h
-        food_field = bfs_distance_field([food], blocked, w, h)
-        for (x, y), d in food_field.items():
-            obs[5, y, x] = 1.0 - d / max_dist
-        tail_field = bfs_distance_field([tail], blocked, w, h)
-        for (x, y), d in tail_field.items():
-            obs[6, y, x] = 1.0 - d / max_dist
-
-        # 7 Hamiltonian index 场（奇x奇地图为全 0）
-        if self._ham_index_map is not None:
-            obs[7, :h, :w] = self._ham_index_map
+        t_bfs = time.perf_counter()
+        fill_normalized_distance_channel(
+            obs[5],
+            [(food.x, food.y)],
+            self._blocked_mask,
+            w,
+            h,
+            max_dist,
+            dist_buf=self._dist_buf,
+        )
+        fill_normalized_distance_channel(
+            obs[6],
+            [(tail.x, tail.y)],
+            self._blocked_mask,
+            w,
+            h,
+            max_dist,
+            dist_buf=self._dist_buf,
+        )
+        if self._profiler is not None:
+            self._profiler.bfs_field_s += time.perf_counter() - t_bfs
 
         return obs
 
