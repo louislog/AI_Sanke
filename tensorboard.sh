@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-tensorboard --logdir tmp/tensorboard
+uv run tensorboard --logdir tmp/tensorboard

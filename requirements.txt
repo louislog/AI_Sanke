@@ -1,8 +1,0 @@
-stable-baselines3
-sb3-contrib
-gymnasium
-pygame
-tensorboard
-pillow
-pytest
-setuptools>=70,<81

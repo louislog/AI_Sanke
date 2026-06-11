@@ -46,17 +46,18 @@
 
 ## 快速开始
 
+本项目使用 [uv](https://docs.astral.sh/uv/) 管理依赖与虚拟环境（`pyproject.toml` + `uv.lock`）。
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 安装依赖（创建 .venv 并锁定版本）
+uv sync
 
 # 运行测试
-python -m pytest tests/ -q
+uv run pytest tests/ -q
 
 # 直接看满图基线（无需训练）
-python eval.py --policy hybrid --grid-size 10 --n-episodes 10
-python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
+uv run python eval.py --policy hybrid --grid-size 10 --n-episodes 10
+uv run python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
 ```
 
 ## 算法路线
@@ -65,16 +66,16 @@ python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
 
 ```bash
 # Hamiltonian 回路：满图覆盖的强基线，偶数边长地图 100% 满图
-python eval.py --policy hamiltonian --grid-size 8 --n-episodes 20
+uv run python eval.py --policy hamiltonian --grid-size 8 --n-episodes 20
 
 # A* 安全寻路：吃完食物后检查蛇头能否到达蛇尾，防止短视自困
-python eval.py --policy search --grid-size 8 --n-episodes 20
+uv run python eval.py --policy search --grid-size 8 --n-episodes 20
 
 # 混合策略（推荐）：前期安全寻路吃食物，覆盖率超过 25% 后切回路
-python eval.py --policy hybrid --grid-size 8 --n-episodes 20
+uv run python eval.py --policy hybrid --grid-size 8 --n-episodes 20
 
 # 多策略 x 多尺寸对比表
-python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10,12 --n-episodes 20
+uv run python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10,12 --n-episodes 20
 ```
 
 关键机制：
@@ -92,19 +93,19 @@ python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10,12
 
 ```bash
 # MaskablePPO（默认）+ 8 通道栅格观测 + coverage 奖励 + 课程学习
-python train.py --algo maskable_ppo --grid-size 10 --curriculum \
+uv run python train.py --algo maskable_ppo --grid-size 10 --curriculum \
     --curriculum-sizes 6,8,10 --total-timesteps 5000000 --n-envs 16
 
 # 其他算法
-python train.py --algo ppo ...
-python train.py --algo dqn --buffer-size 200000 ...
-python train.py --algo qrdqn ...
+uv run python train.py --algo ppo ...
+uv run python train.py --algo dqn --buffer-size 200000 ...
+uv run python train.py --algo qrdqn ...
 
 # 覆盖率达标即提前进入下一课程阶段
-python train.py --curriculum --coverage-threshold 0.9 ...
+uv run python train.py --curriculum --coverage-threshold 0.9 ...
 
 # 评估
-python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
+uv run python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
 ```
 
 观测模式（`--obs-mode`）：
@@ -128,17 +129,17 @@ python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
 
 ```bash
 # 1) 用 hybrid 专家采集演示数据
-python collect_expert.py --policy hybrid --grid-size 8 --n-episodes 500 \
+uv run python collect_expert.py --policy hybrid --grid-size 8 --n-episodes 500 \
     --obs-mode grid_full --out data/expert_hybrid_8.npz
 
 # 2) 行为克隆预训练
-python bc_train.py --data data/expert_hybrid_8.npz --grid-size 8 --epochs 30 --out tmp/bc_model
+uv run python bc_train.py --data data/expert_hybrid_8.npz --grid-size 8 --epochs 30 --out tmp/bc_model
 
 # 3) 评估 BC 模型
-python eval.py --policy rl --model tmp/bc_model.zip --grid-size 8
+uv run python eval.py --policy rl --model tmp/bc_model.zip --grid-size 8
 
 # 4) RL fine-tuning（继承 BC 权重）
-python train.py --init-model tmp/bc_model.zip --grid-size 8 --reward-preset coverage \
+uv run python train.py --init-model tmp/bc_model.zip --grid-size 8 --reward-preset coverage \
     --total-timesteps 2000000
 ```
 
@@ -154,13 +155,13 @@ coverage_ratio、max_coverage、full_map_success_rate、death_reasons（wall / s
 
 ```bash
 # 死亡回放：保存每次死亡前 90 帧（mp4，无 ffmpeg 时自动转 gif）
-python eval.py --policy rl --model tmp/best/best_model.zip --replay-dir replays/
+uv run python eval.py --policy rl --model tmp/best/best_model.zip --replay-dir replays/
 
 # GIF / MP4 演示导出
-python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
+uv run python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
 
 # 实时窗口观看
-python eval.py --policy hybrid --grid-size 10 --render
+uv run python eval.py --policy hybrid --grid-size 10 --render
 ```
 
 ## 各算法优劣对比
@@ -210,7 +211,7 @@ python eval.py --policy hybrid --grid-size 10 --render
 ## 手动游玩
 
 ```bash
-python snake_game.py
+uv run python snake_game.py
 ```
 
 方向键 / WASD 控制，撞死后按 `R` 重开，`ESC` 退出。
