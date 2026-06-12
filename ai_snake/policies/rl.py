@@ -7,7 +7,7 @@ import numpy as np
 from .base import BasePolicy
 
 if TYPE_CHECKING:
-    from snake_env import SnakeEnv
+    from ai_snake.snake_env import SnakeEnv
 
 
 class RLPolicy(BasePolicy):
@@ -21,7 +21,7 @@ class RLPolicy(BasePolicy):
     @classmethod
     def load(cls, model_path: str, algo: str = "auto", deterministic: bool = True):
         """从 checkpoint 加载模型。algo='auto' 时按 maskable_ppo -> ppo -> dqn -> qrdqn 依次尝试。"""
-        from algos import load_model
+        from ai_snake.algos import load_model
 
         return cls(load_model(model_path, algo), deterministic=deterministic)
 

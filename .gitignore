@@ -1,8 +1,10 @@
 __pycache__/
+*.egg-info/
 .venv/
 tmp/
 data/
 replays/
+ai_snake/.snake_highscore
 *.pyc
 
 .vscode/*

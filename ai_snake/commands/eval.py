@@ -1,18 +1,18 @@
-import runtime  # noqa: F401
+import ai_snake.runtime  # noqa: F401
 
 """统一评估入口：支持规则 / 搜索 / 混合 / RL 策略，多地图尺寸对比。
 
 示例：
     # 单策略评估
-    python eval.py --policy hybrid --grid-size 8 --n-episodes 20
-    python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 8
+    snake-ai eval --policy hybrid --grid-size 8 --n-episodes 20
+    snake-ai eval --policy rl --model tmp/best/best_model.zip --grid-size 8
 
     # 多策略 x 多尺寸对比表
-    python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10 --n-episodes 10
+    snake-ai eval --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10 --n-episodes 10
 
     # 视频 / GIF 导出与死亡回放
-    python eval.py --policy hybrid --grid-size 10 --out-video demo.mp4
-    python eval.py --policy rl --model tmp/best/best_model.zip --replay-dir replays/
+    snake-ai eval --policy hybrid --grid-size 10 --out-video demo.mp4
+    snake-ai eval --policy rl --model tmp/best/best_model.zip --replay-dir replays/
 """
 
 import argparse
@@ -22,9 +22,9 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from policies import ALL_POLICIES, make_policy
-from policies.base import BasePolicy
-from snake_env import SnakeEnv
+from ai_snake.policies import ALL_POLICIES, make_policy
+from ai_snake.policies.base import BasePolicy
+from ai_snake.snake_env import SnakeEnv
 
 
 def _has_ffmpeg() -> bool:
@@ -297,7 +297,7 @@ def print_comparison_table(summaries: list[dict]) -> None:
         print(" | ".join(c.ljust(w) for c, w in zip(row, widths)))
 
 
-def _main():
+def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="Evaluate Snake policies.")
     parser.add_argument("--policy", choices=ALL_POLICIES, default=None, help="单策略评估")
     parser.add_argument(
@@ -323,7 +323,7 @@ def _main():
     parser.add_argument("--replay-steps", type=int, default=90, help="回放保留的死亡前帧数")
     parser.add_argument("--render", action="store_true", help="实时窗口渲染")
     parser.add_argument("--seed", type=int, default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.policy is None and args.compare is None:
         # 兼容旧用法：默认评估 RL 模型
@@ -383,4 +383,4 @@ def _main():
 
 
 if __name__ == "__main__":
-    _main()
+    main()

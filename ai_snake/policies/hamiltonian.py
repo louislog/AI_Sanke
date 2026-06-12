@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from snake_game import SnakeGame
+from ai_snake.snake_game import SnakeGame
 
 from .base import BasePolicy
 from .grid_utils import Coord, flood_fill_count, manhattan
 
 if TYPE_CHECKING:
-    from snake_env import SnakeEnv
+    from ai_snake.snake_env import SnakeEnv
 
 
 def has_hamiltonian_cycle(width: int, height: int) -> bool:

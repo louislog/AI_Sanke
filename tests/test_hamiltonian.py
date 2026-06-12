@@ -1,6 +1,6 @@
 import pytest
 
-from policies.hamiltonian import build_hamiltonian_cycle, has_hamiltonian_cycle
+from ai_snake.policies.hamiltonian import build_hamiltonian_cycle, has_hamiltonian_cycle
 
 
 @pytest.mark.parametrize("width,height", [(6, 6), (8, 8), (6, 9), (9, 6), (10, 12), (2, 2)])

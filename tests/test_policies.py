@@ -1,7 +1,7 @@
 import pytest
 
-from policies import make_policy
-from snake_env import SnakeEnv
+from ai_snake.policies import make_policy
+from ai_snake.snake_env import SnakeEnv
 
 
 def _run_episode(policy_name: str, size: int, seed: int = 0, max_steps_factor: int = 120):

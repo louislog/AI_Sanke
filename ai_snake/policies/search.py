@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from snake_game import SnakeGame
+from ai_snake.snake_game import SnakeGame
 
 from .base import BasePolicy
 from .grid_utils import (
@@ -26,7 +26,7 @@ from .grid_utils import (
 )
 
 if TYPE_CHECKING:
-    from snake_env import SnakeEnv
+    from ai_snake.snake_env import SnakeEnv
 
 
 class SearchPolicy(BasePolicy):

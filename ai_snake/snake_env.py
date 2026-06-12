@@ -18,16 +18,16 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from gymnasium import Env, spaces
 
-from policies.grid_utils import (
+from ai_snake.policies.grid_utils import (
     bfs_path,
     blocked_mask_from_coords,
     fill_normalized_distance_channel,
     reachable_ratio_numpy,
 )
-from snake_game import SnakeGame
+from ai_snake.snake_game import SnakeGame
 
 if TYPE_CHECKING:
-    from profiling import ProfileStats
+    from ai_snake.profiling import ProfileStats
 
 
 def default_safety_check_interval(grid_size: int) -> int:
@@ -192,7 +192,7 @@ class SnakeEnv(Env):
         )
 
     def _build_ham_index_map(self) -> np.ndarray | None:
-        from policies.hamiltonian import build_hamiltonian_cycle, has_hamiltonian_cycle
+        from ai_snake.policies.hamiltonian import build_hamiltonian_cycle, has_hamiltonian_cycle
 
         if not has_hamiltonian_cycle(self.width, self.height):
             return None
@@ -338,7 +338,7 @@ class SnakeEnv(Env):
         self.game.draw()
 
         if self.render_mode == "rgb_array":
-            from snake_game import _get_pygame
+            from ai_snake.snake_game import _get_pygame
 
             pygame = _get_pygame()
             array = pygame.surfarray.array3d(self.game.surface).transpose(1, 0, 2)

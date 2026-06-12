@@ -1,4 +1,4 @@
-import runtime  # noqa: F401
+import ai_snake.runtime  # noqa: F401
 
 import argparse
 import os
@@ -7,16 +7,16 @@ from typing import Any
 
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
 
-from algos import available_algos, build_model, load_model, supports_action_masking
-from profiling import (
+from ai_snake.algos import available_algos, build_model, load_model, supports_action_masking
+from ai_snake.profiling import (
     EvalTimerCallback,
     ProfileStats,
     TrainingProfileCallback,
     _attach_profiler_to_vec_env,
 )
-from snake_env import REWARD_PRESETS, SnakeEnv, default_safety_check_interval
-from snake_game import SnakeGame
-from training_utils import (
+from ai_snake.snake_env import REWARD_PRESETS, SnakeEnv, default_safety_check_interval
+from ai_snake.snake_game import SnakeGame
+from ai_snake.training_utils import (
     algo_training_defaults,
     apply_torch_compile,
     make_snake_vec_env,
@@ -163,7 +163,7 @@ def _parse_bool(s: str) -> bool:
     return s.lower() in ("1", "true", "yes", "on")
 
 
-def _main():
+def main(argv: list[str] | None = None):
     defaults = algo_training_defaults("maskable_ppo", SnakeGame.DEFAULT_WIDTH)
 
     parser = argparse.ArgumentParser(description="Train an RL agent to play Snake.")
@@ -184,7 +184,7 @@ def _main():
     parser.add_argument("--total-timesteps", type=int, default=5_000_000)
     parser.add_argument("--save-freq", type=int, default=defaults["save_freq"])
     parser.add_argument("--eval-freq", type=int, default=defaults["eval_freq"])
-    parser.add_argument("--no-eval", action="store_true", help="训练期间不做评估（完整评估用 eval.py）")
+    parser.add_argument("--no-eval", action="store_true", help="训练期间不做评估（完整评估用 snake-ai eval）")
     parser.add_argument(
         "--n-eval-episodes",
         type=int,
@@ -265,7 +265,7 @@ def _main():
         action="store_true",
         help="启用训练 profiling（环境 step / 奖励 / obs / FPS）",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # 按算法与地图尺寸刷新未显式覆盖的默认超参
     algo_defaults = algo_training_defaults(args.algo, args.grid_size)
@@ -299,7 +299,7 @@ def _main():
     if args.profile and args.vec_env == "subproc" and args.n_envs > 1:
         print(
             "[profile] 警告: SubprocVecEnv 下环境细分耗时无法跨进程汇总；"
-            " 环境瓶颈请用 `python profiling.py`，训练吞吐 FPS 仍有效。"
+            " 环境瓶颈请用 `snake-ai bench env`，训练吞吐 FPS 仍有效。"
         )
 
     vec_env = make_snake_vec_env(
@@ -416,4 +416,4 @@ def _main():
 
 
 if __name__ == "__main__":
-    _main()
+    main()

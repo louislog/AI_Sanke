@@ -1,6 +1,6 @@
 import numpy as np
 
-from policies.grid_utils import (
+from ai_snake.policies.grid_utils import (
     astar_path,
     bfs_distance_field,
     bfs_distance_field_array,
@@ -11,7 +11,7 @@ from policies.grid_utils import (
     simulate_follow_path,
     tail_reachable_after_path,
 )
-from snake_game import SnakeGame
+from ai_snake.snake_game import SnakeGame
 
 
 def test_bfs_path_simple():

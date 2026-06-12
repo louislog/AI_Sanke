@@ -1,6 +1,6 @@
 """RL 算法工厂：统一创建 / 加载 PPO、MaskablePPO、DQN、QR-DQN 模型。
 
-新增算法只需在 ALGO_REGISTRY 注册，train.py / eval.py / bc_train.py 自动支持。
+新增算法只需在 ALGO_REGISTRY 注册，snake-ai train / eval / imitate train 自动支持。
 """
 
 import os
@@ -8,7 +8,7 @@ from typing import Any
 
 from stable_baselines3 import DQN, PPO
 
-from snake_cnn import SnakeCNN
+from ai_snake.snake_cnn import SnakeCNN
 
 try:
     from sb3_contrib import MaskablePPO, QRDQN

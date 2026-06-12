@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import multiprocessing
 import time
 from dataclasses import dataclass, field
@@ -10,7 +9,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from snake_env import SnakeEnv
+from ai_snake.snake_env import SnakeEnv
 
 
 @dataclass
@@ -224,29 +223,3 @@ def _cpu_utilization_hint() -> str:
         return f"CPU cores: {multiprocessing.cpu_count()} (install psutil for utilization)"
 
 
-def _main():
-    parser = argparse.ArgumentParser(description="Profile SnakeEnv step throughput.")
-    parser.add_argument("--steps", type=int, default=2000)
-    parser.add_argument("--grid-size", type=int, default=10)
-    parser.add_argument("--obs-mode", default="grid_full")
-    parser.add_argument("--reward-preset", default="coverage")
-    parser.add_argument("--safety-check-interval", type=int, default=None)
-    args = parser.parse_args()
-
-    print(f"Profiling {args.steps} env steps on {args.grid_size}x{args.grid_size} ...")
-    print(_cpu_utilization_hint())
-
-    stats = run_env_profile(
-        steps=args.steps,
-        grid_size=args.grid_size,
-        obs_mode=args.obs_mode,
-        reward_preset=args.reward_preset,
-        safety_check_interval=args.safety_check_interval,
-    )
-    print(stats.report())
-    n = max(stats.n_steps, 1)
-    print(f"  env throughput        : {n / stats.env_step_s:.0f} steps/s")
-
-
-if __name__ == "__main__":
-    _main()

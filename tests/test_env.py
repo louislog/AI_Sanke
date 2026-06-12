@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from snake_env import REWARD_PRESETS, RewardConfig, SnakeEnv, resolve_reward_config
+from ai_snake.snake_env import REWARD_PRESETS, RewardConfig, SnakeEnv, resolve_reward_config
 
 
 @pytest.mark.parametrize("obs_mode,channels", [("grid", 3), ("grid_full", 8)])

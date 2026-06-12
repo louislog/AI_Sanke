@@ -12,38 +12,58 @@
 不局限于单一 RL 算法，而是提供 **规则 / 搜索 / 混合 / 强化学习 / 模仿学习** 多条算法路线，
 配套统一的训练、评估、可视化与失败分析工具链。
 
-![演示demo](demo.gif)
+![演示demo](docs/assets/demo.gif)
 ## 当前基线成绩（每尺寸 20 局）
 
-| 策略 | 6x6 | 8x8 | 10x10 | 12x12 | 平均覆盖率 |
-|------|-----|-----|-------|-------|-----------|
-| random | 0% | 0% | 0% | 0% | ~10% |
-| search (A* 安全寻路) | 15% | 0% | 0% | 0% | ~74% |
-| **hamiltonian** | **100%** | **100%** | **100%** | **100%** | 100% |
-| **hybrid** | **100%** | **100%** | **100%** | **100%** | 100% |
+| 策略 | 6×6 | 8×8 | 10×10 | 12×12 |
+|------|-----|-----|-------|-------|
+| random | 4.5 (21%) | 5.2 (13%) | 4.3 (7%) | 4.0 (5%) |
+| search | 23 (73%) | 42 (70%) | 64 (67%) | 91 (65%) |
+| **hamiltonian / hybrid** | **33 ✓** | **61 ✓** | **97 ✓** | **141 ✓** |
 
-（表中百分比为满图成功率；hybrid 比 hamiltonian 平均少走约 5~10% 步数）
+均分（覆盖率）；✓ 表示满图通关率 100%。hamiltonian 与 hybrid 得分相同，hybrid 平均少走约 5~10% 步数。
 
 ## 架构分层
 
 ```
 .
-├── snake_game.py        # 游戏核心逻辑 + Pygame 渲染（含死因记录）
-├── snake_env.py         # Gymnasium 环境：可配置奖励 + 3 种观测模式
-├── policies/            # 策略层（统一 BasePolicy 接口）
-│   ├── grid_utils.py    #   BFS / A* / flood fill / 路径安全模拟
-│   ├── base.py          #   BasePolicy 抽象 + RandomPolicy
-│   ├── hamiltonian.py   #   Hamiltonian 回路构造 + shortcut 策略
-│   ├── search.py        #   A* 安全寻路 + 追尾 + flood fill 兜底
-│   ├── hybrid.py        #   前期搜索吃食物 + 中后期回路保满图
-│   └── rl.py            #   SB3 模型适配器
-├── algos.py             # RL 算法工厂：PPO / MaskablePPO / DQN / QR-DQN
-├── train.py             # RL 训练：课程学习、并行环境、TensorBoard
-├── collect_expert.py    # 模仿学习：专家数据采集
-├── bc_train.py          # 模仿学习：行为克隆（产出可微调的 SB3 模型）
-├── eval.py              # 统一评估：覆盖率 / 死因 / 对比表 / GIF / 死亡回放
-└── tests/               # pytest 测试（环境、回路、各策略满图）
+├── ai_snake/                  # 核心库
+│   ├── snake_game.py        # 游戏逻辑 + Pygame 渲染（含死因记录）
+│   ├── snake_env.py         # Gymnasium 环境：可配置奖励 + 3 种观测模式
+│   ├── policies/            # 策略层（统一 BasePolicy 接口）
+│   │   ├── grid_utils.py    #   BFS / A* / flood fill / 路径安全模拟
+│   │   ├── base.py          #   BasePolicy 抽象 + RandomPolicy
+│   │   ├── hamiltonian.py   #   Hamiltonian 回路 + shortcut
+│   │   ├── search.py        #   A* 安全寻路 + flood fill 兜底
+│   │   ├── hybrid.py        #   前期搜索 + 中后期回路保满图
+│   │   └── rl.py            #   SB3 模型适配器
+│   ├── algos.py             # RL 算法工厂：PPO / MaskablePPO / DQN / QR-DQN
+│   ├── snake_cnn.py         # 栅格观测 CNN 特征提取
+│   ├── training_utils.py    # 设备解析、向量化环境、默认超参
+│   ├── profiling.py         # 训练与环境 profiling 工具
+│   ├── cli.py               # 统一 CLI 入口
+│   └── commands/            # 子命令实现
+│       ├── train.py         # RL 训练
+│       ├── eval.py          # 评估 / 对比 / GIF / 死亡回放
+│       ├── imitate.py       # 模仿学习：collect + BC
+│       ├── bench.py         # 性能基准：env / obs
+│       └── play.py          # 手动游玩
+├── scripts/
+│   └── tensorboard.sh       # TensorBoard 启动脚本
+└── tests/                   # pytest 测试
 ```
+
+所有操作通过统一 CLI `snake-ai` 调用（`pyproject.toml` 注册，安装后亦可直接 `snake-ai`）：
+
+| 命令 | 说明 |
+|------|------|
+| `snake-ai train` | RL 训练（课程学习、并行环境、TensorBoard） |
+| `snake-ai eval` | 策略评估、多策略对比、GIF / 死亡回放 |
+| `snake-ai imitate collect` | 专家演示数据采集 |
+| `snake-ai imitate train` | 行为克隆（BC）预训练 |
+| `snake-ai bench env` | 环境 step 细分 profiling |
+| `snake-ai bench obs` | 观测构造吞吐 benchmark |
+| `snake-ai play` | 手动游玩 |
 
 ## 快速开始
 
@@ -57,8 +77,8 @@ uv sync
 uv run pytest tests/ -q
 
 # 直接看满图基线（无需训练）
-uv run python eval.py --policy hybrid --grid-size 10 --n-episodes 10
-uv run python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
+uv run snake-ai eval --policy hybrid --grid-size 10 --n-episodes 10
+uv run snake-ai eval --policy hybrid --grid-size 10 --out-video docs/assets/demo.gif
 ```
 
 ## 算法路线
@@ -67,16 +87,16 @@ uv run python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
 
 ```bash
 # Hamiltonian 回路：满图覆盖的强基线，偶数边长地图 100% 满图
-uv run python eval.py --policy hamiltonian --grid-size 8 --n-episodes 20
+uv run snake-ai eval --policy hamiltonian --grid-size 8 --n-episodes 20
 
 # A* 安全寻路：吃完食物后检查蛇头能否到达蛇尾，防止短视自困
-uv run python eval.py --policy search --grid-size 8 --n-episodes 20
+uv run snake-ai eval --policy search --grid-size 8 --n-episodes 20
 
 # 混合策略（推荐）：前期安全寻路吃食物，覆盖率超过 25% 后切回路
-uv run python eval.py --policy hybrid --grid-size 8 --n-episodes 20
+uv run snake-ai eval --policy hybrid --grid-size 8 --n-episodes 20
 
 # 多策略 x 多尺寸对比表
-uv run python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10,12 --n-episodes 20
+uv run snake-ai eval --compare random,search,hamiltonian,hybrid --grid-sizes 6,8,10,12 --n-episodes 20
 ```
 
 关键机制：
@@ -94,19 +114,19 @@ uv run python eval.py --compare random,search,hamiltonian,hybrid --grid-sizes 6,
 
 ```bash
 # MaskablePPO（默认）+ 8 通道栅格观测 + coverage 奖励 + 课程学习
-uv run python train.py --algo maskable_ppo --grid-size 10 --curriculum \
+uv run snake-ai train --algo maskable_ppo --grid-size 10 --curriculum \
     --curriculum-sizes 6,8,10 --total-timesteps 5000000 --n-envs 16
 
 # 其他算法
-uv run python train.py --algo ppo ...
-uv run python train.py --algo dqn --buffer-size 200000 ...
-uv run python train.py --algo qrdqn ...
+uv run snake-ai train --algo ppo ...
+uv run snake-ai train --algo dqn --buffer-size 200000 ...
+uv run snake-ai train --algo qrdqn ...
 
 # 覆盖率达标即提前进入下一课程阶段
-uv run python train.py --curriculum --coverage-threshold 0.9 ...
+uv run snake-ai train --curriculum --coverage-threshold 0.9 ...
 
-# 评估（完整评估请用 eval.py，训练中默认轻量 eval）
-uv run python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
+# 评估（完整评估请用 snake-ai eval，训练中默认轻量 eval）
+uv run snake-ai eval --policy rl --model tmp/best/best_model.zip --grid-size 10
 ```
 
 #### 快速训练 / GPU / 多进程
@@ -116,23 +136,23 @@ uv run python eval.py --policy rl --model tmp/best/best_model.zip --grid-size 10
 
 | 场景 | 推荐命令 |
 |------|---------|
-| **Mac M 系列 CPU 快速调试**（小图） | `uv run python train.py --grid-size 6 --n-envs 8 --vec-env subproc --total-timesteps 200000 --no-eval --eval-freq 999999999` |
-| **Mac M 系列正式训练** | `uv run python train.py --device mps --vec-env subproc --n-envs 16 --grid-size 10 --curriculum --curriculum-sizes 6,8,10` |
-| **Linux + NVIDIA GPU** | `uv run python train.py --device cuda --cuda-device 0 --vec-env subproc --n-envs 32 --grid-size 10 --curriculum` |
-| **CPU 多进程最大化采样** | `uv run python train.py --device cpu --vec-env subproc --n-envs 32 --safety-check-interval 2` |
-| **长时间正式训练** | `uv run python train.py --algo maskable_ppo --curriculum --grid-size 12 --total-timesteps 10000000 --save-freq 500000 --eval-freq 500000 --n-eval-episodes 10` |
+| **Mac M 系列 CPU 快速调试**（小图） | `uv run snake-ai train --grid-size 6 --n-envs 8 --vec-env subproc --total-timesteps 200000 --no-eval --eval-freq 999999999` |
+| **Mac M 系列正式训练** | `uv run snake-ai train --device mps --vec-env subproc --n-envs 16 --grid-size 10 --curriculum --curriculum-sizes 6,8,10` |
+| **Linux + NVIDIA GPU** | `uv run snake-ai train --device cuda --cuda-device 0 --vec-env subproc --n-envs 32 --grid-size 10 --curriculum` |
+| **CPU 多进程最大化采样** | `uv run snake-ai train --device cpu --vec-env subproc --n-envs 32 --safety-check-interval 2` |
+| **长时间正式训练** | `uv run snake-ai train --algo maskable_ppo --curriculum --grid-size 12 --total-timesteps 10000000 --save-freq 500000 --eval-freq 500000 --n-eval-episodes 10` |
 
 **Profiling 与吞吐：**
 
 ```bash
 # 仅测环境 step（不含神经网络）
-uv run python profiling.py --steps 3000 --grid-size 10
+uv run snake-ai bench env --steps 3000 --grid-size 10
 
 # 观测构造 benchmark
-uv run python bench_obs.py --steps 500 --grid-size 10
+uv run snake-ai bench obs --steps 500 --grid-size 10
 
 # 训练时开启 profiling（终端会打印 env/reward/obs 耗时与 FPS）
-uv run python train.py --profile --total-timesteps 50000 --no-eval
+uv run snake-ai train --profile --total-timesteps 50000 --no-eval
 ```
 
 **验证 SubprocVecEnv 是否生效：** 训练启动日志会打印 `Vec env: SubprocVecEnv (subproc, n_envs=...)`。
@@ -149,7 +169,7 @@ uv run python train.py --profile --total-timesteps 50000 --no-eval
 | `--n-envs` | 并行环境数 |
 | `--safety-check-interval` | flood fill 惩罚计算间隔（默认按地图尺寸） |
 | `--eval-freq` / `--n-eval-episodes` | 训练中轻量评估频率与局数 |
-| `--no-eval` | 关闭训练中评估，完整评估交给 `eval.py` |
+| `--no-eval` | 关闭训练中评估，完整评估交给 `snake-ai eval` |
 | `--save-freq` / `--log-interval` | checkpoint 与 TensorBoard 日志频率 |
 | `--torch-compile true` | 可选编译 policy（实验性） |
 | `--profile` | 启用训练 profiling |
@@ -162,7 +182,7 @@ uv run python train.py --profile --total-timesteps 50000 --no-eval
 | `grid` | 3 通道：蛇头、蛇身、食物（旧版兼容） |
 | `vector` | 24 维手工特征（旧版兼容） |
 
-奖励预设（`--reward-preset`，定义见 `snake_env.py` 的 `REWARD_PRESETS`，方便消融）：
+奖励预设（`--reward-preset`，定义见 `ai_snake/snake_env.py` 的 `REWARD_PRESETS`，方便消融）：
 
 | 预设 | 设计意图 |
 |------|---------|
@@ -175,17 +195,17 @@ uv run python train.py --profile --total-timesteps 50000 --no-eval
 
 ```bash
 # 1) 用 hybrid 专家采集演示数据
-uv run python collect_expert.py --policy hybrid --grid-size 8 --n-episodes 500 \
+uv run snake-ai imitate collect --policy hybrid --grid-size 8 --n-episodes 500 \
     --obs-mode grid_full --out data/expert_hybrid_8.npz
 
 # 2) 行为克隆预训练
-uv run python bc_train.py --data data/expert_hybrid_8.npz --grid-size 8 --epochs 30 --out tmp/bc_model
+uv run snake-ai imitate train --data data/expert_hybrid_8.npz --grid-size 8 --epochs 30 --out tmp/bc_model
 
 # 3) 评估 BC 模型
-uv run python eval.py --policy rl --model tmp/bc_model.zip --grid-size 8
+uv run snake-ai eval --policy rl --model tmp/bc_model.zip --grid-size 8
 
 # 4) RL fine-tuning（继承 BC 权重）
-uv run python train.py --init-model tmp/bc_model.zip --grid-size 8 --reward-preset coverage \
+uv run snake-ai train --init-model tmp/bc_model.zip --grid-size 8 --reward-preset coverage \
     --total-timesteps 2000000
 ```
 
@@ -196,18 +216,18 @@ uv run python train.py --init-model tmp/bc_model.zip --grid-size 8 --reward-pres
 
 ## 评估体系
 
-`eval.py` 输出：average_score、max_score、average_length、max_length、average_steps、
+`snake-ai eval` 输出：average_score、max_score、average_length、max_length、average_steps、
 coverage_ratio、max_coverage、full_map_success_rate、death_reasons（wall / self / timeout）。
 
 ```bash
 # 死亡回放：保存每次死亡前 90 帧（mp4，无 ffmpeg 时自动转 gif）
-uv run python eval.py --policy rl --model tmp/best/best_model.zip --replay-dir replays/
+uv run snake-ai eval --policy rl --model tmp/best/best_model.zip --replay-dir replays/
 
 # GIF / MP4 演示导出
-uv run python eval.py --policy hybrid --grid-size 10 --out-video demo.gif
+uv run snake-ai eval --policy hybrid --grid-size 10 --out-video docs/assets/demo.gif
 
 # 实时窗口观看
-uv run python eval.py --policy hybrid --grid-size 10 --render
+uv run snake-ai eval --policy hybrid --grid-size 10 --render
 ```
 
 ## 各算法优劣对比
@@ -257,7 +277,7 @@ uv run python eval.py --policy hybrid --grid-size 10 --render
 ## 手动游玩
 
 ```bash
-uv run python snake_game.py
+uv run snake-ai play
 ```
 
 方向键 / WASD 控制，撞死后按 `R` 重开，`ESC` 退出。
@@ -265,10 +285,10 @@ uv run python snake_game.py
 ## TensorBoard 与训练日志
 
 ```bash
-bash tensorboard.sh
+bash scripts/tensorboard.sh
 ```
 
-`train.py` 的 `verbose=1` 终端日志分三组：**rollout/**（采样表现）、**time/**（进度）、
+`snake-ai train` 的 `verbose=1` 终端日志分三组：**rollout/**（采样表现）、**time/**（进度）、
 **train/**（梯度更新）。
 
 | 想看什么 | 主要看 |

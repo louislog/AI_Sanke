@@ -92,7 +92,7 @@ def make_snake_vec_env(
 ):
     """创建向量化环境；n_envs>1 且 subproc 时使用 SubprocVecEnv。"""
     if env_class is None:
-        from snake_env import SnakeEnv
+        from ai_snake.snake_env import SnakeEnv
 
         env_class = SnakeEnv
 

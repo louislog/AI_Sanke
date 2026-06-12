@@ -22,7 +22,7 @@ from .hamiltonian import HamiltonianPolicy, has_hamiltonian_cycle
 from .search import SearchPolicy
 
 if TYPE_CHECKING:
-    from snake_env import SnakeEnv
+    from ai_snake.snake_env import SnakeEnv
 
 
 class HybridPolicy(BasePolicy):
